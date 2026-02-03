@@ -445,3 +445,11 @@ INFO:     OCR upload received filename=54367e11dcc571a28f8bd743cdddf177.JPG byte
 INFO:     OCR request start model=Qwen/Qwen3-VL-32B-Instruct bytes=333974 detail=high filename=54367e11dcc571a28f8bd743cdddf177.JPG timeout=180s base_url=https://api.siliconflow.cn/v1
 INFO:     OCR response received length=1384 items=7 elapsed=96.74s
 INFO:     127.0.0.1:62450 - "POST /api/ocr/extract HTTP/1.1" 200 OK
+INFO:     OCR upload received filename=54367e11dcc571a28f8bd743cdddf177.JPG bytes=333974 content_type=image/jpeg
+INFO:     OCR request start model=Qwen/Qwen3-VL-32B-Instruct bytes=333974 detail=high filename=54367e11dcc571a28f8bd743cdddf177.JPG timeout=180s base_url=https://api.siliconflow.cn/v1
+INFO:     OCR response received length=1384 items=7 elapsed=48.38s
+INFO:     127.0.0.1:65486 - "POST /api/ocr/extract HTTP/1.1" 200 OK
+INFO:     OCR upload received filename=54367e11dcc571a28f8bd743cdddf177.JPG bytes=333974 content_type=image/jpeg
+INFO:     OCR request start model=Qwen/Qwen3-VL-32B-Instruct bytes=333974 detail=high filename=54367e11dcc571a28f8bd743cdddf177.JPG timeout=180s base_url=https://api.siliconflow.cn/v1
+INFO:     OCR response received length=1444 items=7 elapsed=54.67s
+INFO:     127.0.0.1:54645 - "POST /api/ocr/extract HTTP/1.1" 200 OK
