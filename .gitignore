@@ -6,3 +6,4 @@ venv/
 .env
 .env.*
 .DS_Store
+app/core/llm_secrets.py

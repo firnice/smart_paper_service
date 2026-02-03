@@ -26,13 +26,24 @@ app/
 ## 开发
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+./start.sh
 ```
 
 健康检查：`http://localhost:8000/api/health`
+
+## SiliconFlow 配置
+
+复制并填写配置文件（该文件已在 `.gitignore` 中忽略）：
+
+```bash
+cp app/core/llm_secrets.example.py app/core/llm_secrets.py
+```
+
+然后在 `app/core/llm_secrets.py` 填入 `SILICONFLOW_API_KEY`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_MODEL`、`SILICONFLOW_OCR_MODEL`。
+
+`SILICONFLOW_MODEL` 用于同类题生成，`SILICONFLOW_OCR_MODEL` 用于 OCR/版面分析。
+
+如果遇到 OCR 超时，可适当调大 `SILICONFLOW_TIMEOUT_SECONDS`（例如 180），或上传尺寸更小的图片。
 
 ## 下一步接入
 
