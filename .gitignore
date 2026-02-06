@@ -1,10 +1,29 @@
+# Python caches and environments
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+
+# Local environment and secrets
 .env
 .env.*
-.DS_Store
 app/core/llm_secrets.py
+
+# Local runtime data
+*.db
+*.sqlite3
+logs/*
+!logs/.gitkeep
+storage/*
+!storage/.gitkeep
 server.log*
+
+# Generated artifacts
+test_export_improved.pdf
+示例练习卷.pdf
+
+# OS/editor
+.DS_Store
