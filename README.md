@@ -27,6 +27,10 @@ Smart Paper（智能错题本）后端服务，覆盖以下两类能力：
 - `GET /api/users/{parent_id}/students` 查询家长名下学生
 - `GET /api/users/{student_id}/parents` 查询学生关联家长
 
+### 2.1) 学生登录校验（简版）
+
+- `POST /api/auth/student-login` 学生登录校验（姓名 + 学号/年级可选）
+
 ### 3) 错题本维护（新增，学生维度）
 
 - `GET /api/subjects` 学科列表
@@ -142,6 +146,14 @@ curl -X POST http://localhost:8000/api/users \
 curl -X POST http://localhost:8000/api/users/parent-student-links \
   -H "Content-Type: application/json" \
   -d '{"parent_id":1,"student_id":2,"relation_type":"mother"}'
+```
+
+### 2.1) 学生登录校验（简版）
+
+```bash
+curl -X POST http://localhost:8000/api/auth/student-login \
+  -H "Content-Type: application/json" \
+  -d '{"name":"张小明","student_no":"S-1001"}'
 ```
 
 ### 3) 新增错题（含分类与错误原因）

@@ -1,10 +1,11 @@
 from fastapi import APIRouter
 
-from app.api.routes import export, health, metadata, ocr, statistics, users, variants, wrong_questions
+from app.api.routes import auth, export, health, metadata, ocr, statistics, users, variants, wrong_questions
 
 api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["health"])
+api_router.include_router(auth.router, tags=["auth"])
 api_router.include_router(ocr.router, tags=["ocr"])
 api_router.include_router(variants.router, tags=["variants"])
 api_router.include_router(export.router, tags=["export"])
