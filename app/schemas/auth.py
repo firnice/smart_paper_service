@@ -29,5 +29,6 @@ class StudentLoginStudent(BaseModel):
 class StudentLoginResponse(BaseModel):
     success: bool
     message: str
+    created: bool = False
     session_token: str
     student: StudentLoginStudent

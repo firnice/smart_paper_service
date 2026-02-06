@@ -29,7 +29,8 @@ Smart Paper（智能错题本）后端服务，覆盖以下两类能力：
 
 ### 2.1) 学生登录校验（简版）
 
-- `POST /api/auth/student-login` 学生登录校验（姓名 + 学号/年级可选）
+- `POST /api/auth/student-login` 学生登录校验（姓名必填，学号/年级可选）
+- 若系统中不存在该姓名的学生，会自动创建一个基础学生档案后返回登录成功（便于演示与冷启动）
 
 ### 3) 错题本维护（新增，学生维度）
 
@@ -153,7 +154,7 @@ curl -X POST http://localhost:8000/api/users/parent-student-links \
 ```bash
 curl -X POST http://localhost:8000/api/auth/student-login \
   -H "Content-Type: application/json" \
-  -d '{"name":"张小明","student_no":"S-1001"}'
+  -d '{"name":"张小明","student_no":"S-1001","grade":"三年级"}'
 ```
 
 ### 3) 新增错题（含分类与错误原因）
