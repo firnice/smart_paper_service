@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import StudentProfile, User
@@ -55,6 +56,29 @@ def _reload_student(db: Session, user_id: int) -> User:
     return student
 
 
+def _upsert_student_profile(
+    db: Session,
+    user_id: int,
+    student_no: str | None,
+    grade: str,
+) -> None:
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+    if profile:
+        if student_no and not profile.student_no:
+            profile.student_no = student_no
+        if grade and profile.grade in ("", "未设置"):
+            profile.grade = grade
+        return
+
+    db.add(
+        StudentProfile(
+            user_id=user_id,
+            student_no=student_no,
+            grade=grade,
+        )
+    )
+
+
 @router.post("/api/auth/student-login", response_model=StudentLoginResponse)
 def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
     name = payload.name.strip()
@@ -81,14 +105,21 @@ def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
         user = User(name=name, role="student", status="active")
         db.add(user)
         db.flush()
-        db.add(
-            StudentProfile(
-                user_id=user.id,
-                student_no=payload.student_no,
-                grade=(payload.grade or "未设置").strip() or "未设置",
-            )
+        grade = (payload.grade or "未设置").strip() or "未设置"
+        _upsert_student_profile(
+            db=db,
+            user_id=user.id,
+            student_no=payload.student_no,
+            grade=grade,
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Student profile conflict detected. Please clean orphan student profiles and retry.",
+            ) from exc
         student = _reload_student(db, user.id)
         return _to_login_response(student, message="首次登录成功，已创建学生档案", created=True)
 
@@ -119,14 +150,20 @@ def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
 
     student = students[0]
     if not student.student_profile:
-        db.add(
-            StudentProfile(
-                user_id=student.id,
-                student_no=payload.student_no,
-                grade=(payload.grade or "未设置").strip() or "未设置",
-            )
+        _upsert_student_profile(
+            db=db,
+            user_id=student.id,
+            student_no=payload.student_no,
+            grade=(payload.grade or "未设置").strip() or "未设置",
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Student profile conflict detected. Please clean orphan student profiles and retry.",
+            ) from exc
         student = _reload_student(db, student.id)
 
     # 年级作为辅助信息：若档案仍为默认值则回填，不作为硬性拦截条件。
