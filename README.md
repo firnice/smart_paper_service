@@ -105,7 +105,7 @@ alembic upgrade head
 ### 4) 启动服务
 
 ```bash
-./start.sh
+./start_service.sh dev
 ```
 
 - Swagger: `http://localhost:8000/docs`

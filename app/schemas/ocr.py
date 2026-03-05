@@ -9,6 +9,7 @@ class OcrItem(BaseModel):
     id: int
     text: str
     has_image: bool = False
+    question_box: Optional[ImageBox] = None
     image_box: Optional[ImageBox] = None
 
 
@@ -17,7 +18,10 @@ class OcrItemWithUrls(BaseModel):
     id: int
     text: str
     has_image: bool = False
+    question_box: Optional[ImageBox] = None
     image_box: Optional[ImageBox] = None
+    question_image_url: Optional[str] = None  # 题目截图（含文字+图示）
+    diagram_image_url: Optional[str] = None  # 图示抠图（尽量去文字）
     image_urls: List[str] = []  # 裁剪后的插图URL列表
 
 

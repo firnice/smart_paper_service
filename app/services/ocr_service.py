@@ -1,10 +1,14 @@
 import base64
+import http.client
+from io import BytesIO
 import json
 import logging
 import re
 import time
 from typing import Optional
 from urllib import error, request
+
+from PIL import Image, ImageOps
 
 from app.core.llm_settings import load_llm_settings
 from app.schemas.common import ImageBox
@@ -26,10 +30,60 @@ USER_PROMPT = (
     "id (int, use the printed question number if present), "
     "text (string, include the question number and preserve line breaks), "
     "has_image (bool), "
-    "image_box (list [ymin, xmin, ymax, xmax] in ORIGINAL IMAGE PIXELS, or null). "
+    "question_box (object {ymin,xmin,ymax,xmax} in ORIGINAL IMAGE PIXELS; include question stem/options/diagram), "
+    "image_box (object with keys ymin,xmin,ymax,xmax in ORIGINAL IMAGE PIXELS, or null). "
+    "Do NOT return [x1,y1,x2,y2] array order. "
     "If a question includes a necessary illustration/diagram, set has_image=true and return a "
     "best-effort image_box around the diagram."
 )
+
+REFINE_SYSTEM_PROMPT = (
+    "You are a worksheet diagram locator. "
+    "Find only the printed figure region used to solve the question. "
+    "Strictly exclude handwritten answers, pencil circles, red correction marks, and blank margins."
+)
+
+REFINE_USER_PROMPT = (
+    "Locate the clean printed diagram area in this question snapshot. "
+    "Return ONLY one JSON object with key diagram_box. "
+    "Format: {\"diagram_box\": {\"ymin\": int, \"xmin\": int, \"ymax\": int, \"xmax\": int}}. "
+    "If no printed diagram exists, return {\"diagram_box\": null}. "
+    "Coordinates must be in CURRENT IMAGE pixels."
+)
+
+RETRYABLE_UPSTREAM_CODE_MARKERS = ("50507", "unknown error")
+OCR_RETRY_MAX_SIDE = 2048
+OCR_RETRY_QUALITY = 88
+
+
+def _is_retryable_ocr_http_error(status_code: int, body: str) -> bool:
+    if status_code >= 500:
+        return True
+    lowered = (body or "").lower()
+    return any(marker in lowered for marker in RETRYABLE_UPSTREAM_CODE_MARKERS)
+
+
+def _downscale_for_ocr(image_bytes: bytes, max_side: int = OCR_RETRY_MAX_SIDE) -> tuple[bytes, str]:
+    """
+    Create a JPEG retry candidate with bounded resolution and size.
+    """
+    with Image.open(BytesIO(image_bytes)) as img:
+        normalized = ImageOps.exif_transpose(img)
+        if normalized.mode != "RGB":
+            normalized = normalized.convert("RGB")
+
+        width, height = normalized.size
+        max_len = max(width, height)
+        if max_len > max_side:
+            ratio = max_side / float(max_len)
+            target_width = max(1, int(width * ratio))
+            target_height = max(1, int(height * ratio))
+            normalized = normalized.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+        buffer = BytesIO()
+        normalized.save(buffer, format="JPEG", quality=OCR_RETRY_QUALITY, optimize=True)
+        buffer.seek(0)
+        return buffer.read(), "image/jpeg"
 
 
 def _to_image_box(value: object) -> Optional[ImageBox]:
@@ -158,6 +212,12 @@ def _parse_items(text: str) -> list[OcrItem]:
         if number:
             text_value = _ensure_numbered(text_value, number)
         has_image = bool(raw.get("has_image", False))
+        question_box = _to_image_box(
+            raw.get("question_box")
+            or raw.get("question_bbox")
+            or raw.get("question_region")
+            or raw.get("bbox_question")
+        )
         image_box = _to_image_box(
             raw.get("image_box")
             or raw.get("bbox")
@@ -171,88 +231,187 @@ def _parse_items(text: str) -> list[OcrItem]:
                 id=number or int(raw.get("id", index)),
                 text=text_value,
                 has_image=has_image,
+                question_box=question_box,
                 image_box=image_box,
             )
         )
     return items
 
 
-def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> list[OcrItem]:
-    """Call SiliconFlow vision model to extract questions."""
+def _parse_refine_box(text: str) -> Optional[ImageBox]:
+    cleaned = _strip_code_fence(text).strip()
+    if not cleaned:
+        return None
+
+    payload = None
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                payload = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                payload = None
+
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if not isinstance(payload, dict):
+        return None
+
+    return _to_image_box(
+        payload.get("diagram_box")
+        or payload.get("image_box")
+        or payload.get("bbox")
+        or payload.get("box")
+    )
+
+
+def _call_vision_completion(
+    image_bytes: bytes,
+    content_type: str,
+    file_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.2,
+) -> str:
     settings = load_llm_settings()
     if not settings or not settings.ocr_model:
         logger.error("OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
         raise RuntimeError("SILICONFLOW OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
 
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    data_url = f"data:{content_type};base64,{encoded}"
-
-    detail = "high"
-    logger.info(
-        "OCR request start model=%s bytes=%d detail=%s filename=%s timeout=%ss base_url=%s",
-        settings.ocr_model,
-        len(image_bytes),
-        detail,
-        file_name,
-        settings.timeout_seconds,
-        settings.base_url,
-    )
-    start_time = time.monotonic()
-
-    payload = {
-        "model": settings.ocr_model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_url, "detail": detail}},
-                    {"type": "text", "text": USER_PROMPT},
-                ],
-            },
-        ],
-        "temperature": 0.2,
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    api_url = f"{settings.base_url}/chat/completions"
-    req = request.Request(
-        api_url,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.api_key}",
-        },
-        method="POST",
-    )
+    retry_candidates: list[tuple[str, bytes, str, str]] = [
+        ("orig-high", image_bytes, content_type, "high"),
+    ]
 
     try:
-        with request.urlopen(req, timeout=settings.timeout_seconds) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8")
-        logger.error("OCR HTTP error %s: %s", exc.code, detail)
-        raise RuntimeError(f"OCR request failed ({exc.code}): {detail}") from exc
-    except (TimeoutError, error.URLError) as exc:
-        logger.exception("OCR request timed out or failed")
-        raise RuntimeError(
-            "OCR request timed out. Try a smaller image or increase SILICONFLOW_TIMEOUT_SECONDS."
-        ) from exc
+        retry_bytes, retry_content_type = _downscale_for_ocr(image_bytes)
+        retry_candidates.append(("scaled-high", retry_bytes, retry_content_type, "high"))
+        retry_candidates.append(("scaled-low", retry_bytes, retry_content_type, "low"))
+    except Exception as exc:
+        logger.warning("Failed to build scaled OCR retry candidate: %s", str(exc))
+        retry_candidates.append(("orig-low", image_bytes, content_type, "low"))
 
-    content = (
-        body.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
+    api_url = f"{settings.base_url}/chat/completions"
+    total_attempts = len(retry_candidates)
+    last_error_message = "OCR request failed."
+
+    for index, (tag, candidate_bytes, candidate_content_type, detail) in enumerate(retry_candidates, start=1):
+        encoded = base64.b64encode(candidate_bytes).decode("utf-8")
+        data_url = f"data:{candidate_content_type};base64,{encoded}"
+        payload = {
+            "model": settings.ocr_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": data_url, "detail": detail}},
+                        {"type": "text", "text": user_prompt},
+                    ],
+                },
+            ],
+            "temperature": temperature,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            api_url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {settings.api_key}",
+            },
+            method="POST",
+        )
+
+        logger.info(
+            "OCR request start attempt=%d/%d tag=%s model=%s bytes=%d detail=%s filename=%s timeout=%ss",
+            index,
+            total_attempts,
+            tag,
+            settings.ocr_model,
+            len(candidate_bytes),
+            detail,
+            file_name,
+            settings.timeout_seconds,
+        )
+        start_time = time.monotonic()
+
+        try:
+            with request.urlopen(req, timeout=settings.timeout_seconds) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            content = (
+                body.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                "OCR response received attempt=%d/%d tag=%s length=%d elapsed=%.2fs",
+                index,
+                total_attempts,
+                tag,
+                len(content),
+                elapsed,
+            )
+            return content
+        except error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            elapsed = time.monotonic() - start_time
+            retryable = _is_retryable_ocr_http_error(exc.code, body_text)
+            has_next = index < total_attempts
+            logger.error(
+                "OCR HTTP error attempt=%d/%d tag=%s status=%s retryable=%s elapsed=%.2fs body=%s",
+                index,
+                total_attempts,
+                tag,
+                exc.code,
+                retryable and has_next,
+                elapsed,
+                body_text,
+            )
+            if retryable and has_next:
+                continue
+            if retryable:
+                last_error_message = "OCR 上游服务暂时异常，请稍后重试。"
+            else:
+                last_error_message = f"OCR request failed ({exc.code})."
+            raise RuntimeError(last_error_message) from exc
+        except (TimeoutError, error.URLError, http.client.RemoteDisconnected, ConnectionError) as exc:
+            elapsed = time.monotonic() - start_time
+            has_next = index < total_attempts
+            logger.warning(
+                "OCR request timeout/network error attempt=%d/%d tag=%s retryable=%s elapsed=%.2fs err=%s",
+                index,
+                total_attempts,
+                tag,
+                has_next,
+                elapsed,
+                str(exc),
+            )
+            if has_next:
+                continue
+            last_error_message = (
+                "OCR request failed or timed out. Try again, use a smaller image, "
+                "or increase SILICONFLOW_TIMEOUT_SECONDS."
+            )
+            raise RuntimeError(last_error_message) from exc
+
+    raise RuntimeError(last_error_message)
+
+
+def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> list[OcrItem]:
+    """Call SiliconFlow vision model to extract questions."""
+    content = _call_vision_completion(
+        image_bytes=image_bytes,
+        content_type=content_type,
+        file_name=file_name,
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=USER_PROMPT,
+        temperature=0.2,
     )
-
     items = _parse_items(content)
-    elapsed = time.monotonic() - start_time
-    logger.info(
-        "OCR response received length=%d items=%d elapsed=%.2fs",
-        len(content),
-        len(items),
-        elapsed,
-    )
+    logger.info("OCR parsed items=%d", len(items))
     if not items and content.strip():
         return [
             OcrItem(
@@ -263,3 +422,30 @@ def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> 
             )
         ]
     return items
+
+
+def refine_diagram_box(image_bytes: bytes, content_type: str, file_name: str) -> Optional[ImageBox]:
+    """
+    Second-pass refinement for printed diagram region.
+    Input should be one question snapshot.
+    """
+    content = _call_vision_completion(
+        image_bytes=image_bytes,
+        content_type=content_type,
+        file_name=file_name,
+        system_prompt=REFINE_SYSTEM_PROMPT,
+        user_prompt=REFINE_USER_PROMPT,
+        temperature=0.0,
+    )
+    box = _parse_refine_box(content)
+    if box:
+        logger.info(
+            "Refine diagram box parsed: (%d,%d,%d,%d)",
+            box.ymin,
+            box.xmin,
+            box.ymax,
+            box.xmax,
+        )
+    else:
+        logger.info("Refine diagram box not found")
+    return box
