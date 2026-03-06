@@ -13,6 +13,15 @@ class LlmSettings:
     ocr_model: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class WhataiSettings:
+    api_key: str
+    base_url: str
+    diagram_crop_model: Optional[str] = None
+    diagram_svg_model: Optional[str] = None
+    timeout_seconds: int = 180
+
+
 def _load_from_secrets() -> dict[str, Optional[str]]:
     try:
         secrets = import_module("app.core.llm_secrets")
@@ -25,6 +34,21 @@ def _load_from_secrets() -> dict[str, Optional[str]]:
         "model": getattr(secrets, "SILICONFLOW_MODEL", None),
         "ocr_model": getattr(secrets, "SILICONFLOW_OCR_MODEL", None),
         "timeout_seconds": getattr(secrets, "SILICONFLOW_TIMEOUT_SECONDS", None),
+    }
+
+
+def _load_whatai_from_secrets() -> dict[str, Optional[str]]:
+    try:
+        secrets = import_module("app.core.llm_secrets")
+    except ModuleNotFoundError:
+        return {}
+
+    return {
+        "api_key": getattr(secrets, "WHATAI_API_KEY", None),
+        "base_url": getattr(secrets, "WHATAI_BASE_URL", None),
+        "diagram_crop_model": getattr(secrets, "WHATAI_DIAGRAM_CROP_MODEL", None),
+        "diagram_svg_model": getattr(secrets, "WHATAI_DIAGRAM_SVG_MODEL", None),
+        "timeout_seconds": getattr(secrets, "WHATAI_TIMEOUT_SECONDS", None),
     }
 
 
@@ -56,4 +80,43 @@ def load_llm_settings() -> Optional[LlmSettings]:
         model=model,
         timeout_seconds=timeout_seconds,
         ocr_model=ocr_model,
+    )
+
+
+def load_whatai_settings() -> Optional[WhataiSettings]:
+    config = _load_whatai_from_secrets()
+
+    api_key = config.get("api_key") or os.getenv("WHATAI_API_KEY")
+    base_url = config.get("base_url") or os.getenv("WHATAI_BASE_URL")
+    diagram_crop_model = (
+        config.get("diagram_crop_model")
+        or os.getenv("WHATAI_DIAGRAM_CROP_MODEL")
+        or "gemini-3.1-flash-image-preview"
+    )
+    diagram_svg_model = (
+        config.get("diagram_svg_model")
+        or os.getenv("WHATAI_DIAGRAM_SVG_MODEL")
+        or "gemini-3.1-pro-preview"
+    )
+    timeout_value = config.get("timeout_seconds") or os.getenv("WHATAI_TIMEOUT_SECONDS")
+
+    if not api_key or not base_url:
+        return None
+
+    if not diagram_crop_model and not diagram_svg_model:
+        return None
+
+    timeout_seconds = 180
+    if timeout_value:
+        try:
+            timeout_seconds = int(timeout_value)
+        except ValueError:
+            timeout_seconds = 180
+
+    return WhataiSettings(
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        diagram_crop_model=diagram_crop_model,
+        diagram_svg_model=diagram_svg_model,
+        timeout_seconds=timeout_seconds,
     )

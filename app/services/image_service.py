@@ -2,10 +2,17 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 from PIL import Image, ImageFilter, ImageOps
 import logging
 from app.schemas.common import ImageBox
+
+try:
+    import cv2  # type: ignore
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - optional runtime dependency
+    cv2 = None
+    np = None
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -14,6 +21,21 @@ logger = logging.getLogger("uvicorn.error")
 RED_MARK_R_MIN = 125
 RED_MARK_R_OVER_G = 1.18
 RED_MARK_R_OVER_B = 1.18
+BLUE_MARK_B_MIN = 105
+BLUE_MARK_B_OVER_R = 1.12
+BLUE_MARK_B_OVER_G = 1.08
+ANNOTATION_CHROMA_MIN = 22
+ANNOTATION_INPAINT_RADIUS = 3
+
+ANNOTATION_CC_MIN_PIXELS = 10
+ANNOTATION_CC_MAX_AREA_RATIO = 0.20
+ANNOTATION_TEXT_DARK_THRESHOLD = 95
+ANNOTATION_TEXT_CHROMA_MAX = 18
+ANNOTATION_TEXT_ROW_DENSITY_MIN = 0.18
+ANNOTATION_TEXT_OVERLAP_KEEP_RATIO = 0.72
+ANNOTATION_FALLBACK_ORIGINAL_RATIO_MIN = 0.006
+ANNOTATION_FALLBACK_RESIDUAL_RATIO_MAX = 0.62
+ANNOTATION_FALLBACK_MIN_REMOVED_PIXELS = 18
 
 OTSU_DEFAULT_THRESHOLD = 140
 OTSU_MIN_THRESHOLD = 60
@@ -22,8 +44,8 @@ OTSU_MAX_THRESHOLD = 210
 DIAGRAM_COMPONENT_MIN_AREA_RATIO = 0.0001
 DIAGRAM_COMPONENT_MIN_AREA_PIXELS = 18
 DIAGRAM_COMPONENT_DENSITY_MIN = 0.03
-DIAGRAM_COMPONENT_ASPECT_MIN = 0.20
-DIAGRAM_COMPONENT_ASPECT_MAX = 8.0
+DIAGRAM_COMPONENT_ASPECT_MIN = 0.08
+DIAGRAM_COMPONENT_ASPECT_MAX = 16.0
 
 DIAGRAM_CLUSTER_GAP_X_RATIO = 0.015
 DIAGRAM_CLUSTER_GAP_Y_RATIO = 0.020
@@ -31,13 +53,17 @@ DIAGRAM_CLUSTER_GAP_X_MIN = 10
 DIAGRAM_CLUSTER_GAP_Y_MIN = 8
 DIAGRAM_CLUSTER_UPPER_BIAS_Y_RATIO = 0.62
 DIAGRAM_CLUSTER_UPPER_BIAS_FACTOR = 1.08
+DIAGRAM_CLUSTER_SECONDARY_SCORE_RATIO = 0.42
+DIAGRAM_CLUSTER_SECONDARY_X_GAP_RATIO = 0.35
+DIAGRAM_CLUSTER_SECONDARY_Y_GAP_RATIO = 0.28
 
 DIAGRAM_ALPHA_DILATE_SIZE = 3
 DIAGRAM_CUTOUT_PAD_X_RATIO = 0.04
 DIAGRAM_CUTOUT_PAD_Y_RATIO = 0.06
 DIAGRAM_CUTOUT_PAD_X_MIN = 8
 DIAGRAM_CUTOUT_PAD_Y_MIN = 6
-DIAGRAM_CUTOUT_MIN_AREA_RATIO = 0.62
+DIAGRAM_CUTOUT_MIN_AREA_RATIO = 0.10
+DIAGRAM_CUTOUT_ALPHA_MIN_RATIO = 0.01
 
 FOREGROUND_DARK_PIXEL_THRESHOLD = 150
 FOREGROUND_PROFILE_BASE_THRESHOLD = 0.03
@@ -71,6 +97,9 @@ BOX_IDEAL_ASPECT = 1.8
 BOX_SCALE_SIDE_THRESHOLD = 2500
 BOX_SCALE_COORD_MAX = 1300
 BOX_SCALE_AREA_GAIN_THRESHOLD = 1.2
+
+PREPROCESS_DESKEW_MIN_PIXELS = 120
+PREPROCESS_DESKEW_MAX_ANGLE = 18.0
 
 
 def _is_heic(content_type: str, filename: str) -> bool:
@@ -172,6 +201,106 @@ def normalize_image_for_ocr(
         return image_bytes, safe_content_type, safe_filename
 
 
+def _estimate_skew_angle(gray_image: Any) -> float:
+    _, binary = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    coords = np.column_stack(np.where(binary > 0))
+    if coords.shape[0] < PREPROCESS_DESKEW_MIN_PIXELS:
+        return 0.0
+
+    angle = float(cv2.minAreaRect(coords.astype(np.float32))[-1])
+    if angle < -45:
+        angle = -(90 + angle)
+    else:
+        angle = -angle
+
+    if abs(angle) > PREPROCESS_DESKEW_MAX_ANGLE:
+        return 0.0
+    return angle
+
+
+def _rotate_with_white_background(image: Any, angle: float) -> Any:
+    if abs(angle) < 1e-3:
+        return image
+    height, width = image.shape[:2]
+    center = (width / 2.0, height / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (width, height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+
+
+def _opencv_preprocess_for_ocr(image_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
+    if cv2 is None or np is None:
+        raise RuntimeError("OpenCV dependency unavailable")
+
+    buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    decoded = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if decoded is None:
+        raise RuntimeError("OpenCV failed to decode image bytes")
+
+    gray = cv2.cvtColor(decoded, cv2.COLOR_BGR2GRAY)
+    deskew_angle = _estimate_skew_angle(gray)
+    deskewed = _rotate_with_white_background(decoded, deskew_angle)
+    deskewed_gray = cv2.cvtColor(deskewed, cv2.COLOR_BGR2GRAY)
+
+    # White-balance by flattening uneven background, then denoise for OCR robustness.
+    smooth = cv2.GaussianBlur(deskewed_gray, (0, 0), sigmaX=17, sigmaY=17)
+    whitened = cv2.divide(deskewed_gray, smooth, scale=255)
+    denoised = cv2.fastNlMeansDenoising(whitened, None, h=10, templateWindowSize=7, searchWindowSize=21)
+
+    ok, encoded = cv2.imencode(".jpg", denoised, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    if not ok:
+        raise RuntimeError("OpenCV failed to encode preprocessed image")
+
+    return encoded.tobytes(), {
+        "engine": "opencv",
+        "deskew_angle": round(deskew_angle, 3),
+    }
+
+
+def prepare_image_for_ocr_pipeline(
+    image_bytes: bytes,
+    content_type: str,
+    filename: str,
+    *,
+    enable_local_preprocess: bool = True,
+) -> tuple[bytes, str, str, dict[str, Any]]:
+    normalized_bytes, normalized_content_type, normalized_filename = normalize_image_for_ocr(
+        image_bytes,
+        content_type,
+        filename,
+    )
+
+    metadata: dict[str, Any] = {
+        "preprocessing_enabled": enable_local_preprocess,
+        "preprocessing_applied": False,
+        "preprocessing_engine": None,
+        "deskew_angle": None,
+        "preprocessing_fallback_reason": None,
+    }
+    if not enable_local_preprocess:
+        return normalized_bytes, normalized_content_type, normalized_filename, metadata
+
+    try:
+        processed_bytes, details = _opencv_preprocess_for_ocr(normalized_bytes)
+        metadata["preprocessing_applied"] = True
+        metadata["preprocessing_engine"] = details.get("engine")
+        metadata["deskew_angle"] = details.get("deskew_angle")
+        return processed_bytes, "image/jpeg", normalized_filename, metadata
+    except Exception as exc:
+        metadata["preprocessing_fallback_reason"] = str(exc)
+        logger.warning(
+            "Local preprocess unavailable/failed, fallback to normalized image: %s",
+            str(exc),
+        )
+        return normalized_bytes, normalized_content_type, normalized_filename, metadata
+
+
 def get_image_size(image_bytes: bytes) -> tuple[int, int]:
     with Image.open(BytesIO(image_bytes)) as img:
         normalized = ImageOps.exif_transpose(img)
@@ -200,22 +329,158 @@ def _save_png_bytes(image: Image.Image, max_size: Optional[tuple[int, int]] = (8
     return buffer.read(), output.width, output.height
 
 
-def _remove_red_pen_marks(image: Image.Image) -> Image.Image:
+def _build_annotation_mask_np(rgb_array: Any) -> Any:
+    r = rgb_array[:, :, 0].astype("float32")
+    g = rgb_array[:, :, 1].astype("float32")
+    b = rgb_array[:, :, 2].astype("float32")
+    max_c = np.maximum(np.maximum(r, g), b)
+    min_c = np.minimum(np.minimum(r, g), b)
+    chroma_mask = (max_c - min_c) >= ANNOTATION_CHROMA_MIN
+    red_mask = (
+        (r >= RED_MARK_R_MIN)
+        & (r >= g * RED_MARK_R_OVER_G)
+        & (r >= b * RED_MARK_R_OVER_B)
+    )
+    blue_mask = (
+        (b >= BLUE_MARK_B_MIN)
+        & (b >= r * BLUE_MARK_B_OVER_R)
+        & (b >= g * BLUE_MARK_B_OVER_G)
+    )
+    return (red_mask | blue_mask) & chroma_mask
+
+
+def _remove_annotation_marks_basic(image: Image.Image) -> tuple[Image.Image, dict[str, Any]]:
     rgb = image.convert("RGB")
     pixels = rgb.load()
     width, height = rgb.size
+    total = max(1, width * height)
 
+    marked = 0
     for y in range(height):
         for x in range(width):
             r, g, b = pixels[x, y]
-            if (
+            is_red = (
                 r >= RED_MARK_R_MIN
                 and r >= int(g * RED_MARK_R_OVER_G)
                 and r >= int(b * RED_MARK_R_OVER_B)
-            ):
-                # 红笔批注擦白，减少干扰图示阅读
+            )
+            is_blue = (
+                b >= BLUE_MARK_B_MIN
+                and b >= int(r * BLUE_MARK_B_OVER_R)
+                and b >= int(g * BLUE_MARK_B_OVER_G)
+            )
+            is_colorful = (max(r, g, b) - min(r, g, b)) >= ANNOTATION_CHROMA_MIN
+            if (is_red or is_blue) and is_colorful:
                 pixels[x, y] = (255, 255, 255)
-    return rgb
+                marked += 1
+
+    ratio = marked / total
+    return rgb, {
+        "method": "threshold-basic",
+        "original_mark_ratio": ratio,
+        "residual_mark_ratio": 0.0,
+        "removed_pixels": marked,
+        "removed_components": 0,
+    }
+
+
+def _remove_annotation_marks_with_cc(image: Image.Image) -> tuple[Image.Image, dict[str, Any]]:
+    if cv2 is None or np is None:
+        return _remove_annotation_marks_basic(image)
+
+    rgb = np.array(image.convert("RGB"))
+    height, width = rgb.shape[:2]
+    total = max(1, width * height)
+
+    mark_mask = _build_annotation_mask_np(rgb)
+    marked_pixels = int(np.count_nonzero(mark_mask))
+    if marked_pixels == 0:
+        return image.convert("RGB"), {
+            "method": "threshold-cc",
+            "original_mark_ratio": 0.0,
+            "residual_mark_ratio": 0.0,
+            "removed_pixels": 0,
+            "removed_components": 0,
+        }
+
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    dark_mask = gray < FOREGROUND_DARK_PIXEL_THRESHOLD
+    # Protect actual dark glyph/shape neighborhoods instead of full rows.
+    chroma = np.max(rgb, axis=2) - np.min(rgb, axis=2)
+    text_dark_mask = (gray < ANNOTATION_TEXT_DARK_THRESHOLD) & (chroma <= ANNOTATION_TEXT_CHROMA_MAX)
+    text_protect_mask = cv2.dilate(
+        text_dark_mask.astype("uint8"),
+        np.ones((3, 21), dtype="uint8"),
+        iterations=1,
+    ) > 0
+
+    candidate_mask = mark_mask & (~text_protect_mask)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(candidate_mask.astype("uint8"), connectivity=8)
+
+    inpaint_candidate = np.zeros((height, width), dtype="uint8")
+    removed_components = 0
+    removed_pixels = 0
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < ANNOTATION_CC_MIN_PIXELS:
+            continue
+        if area / total > ANNOTATION_CC_MAX_AREA_RATIO:
+            continue
+        component = labels == label
+        text_overlap = int(np.count_nonzero(component & text_dark_mask))
+        if text_overlap / max(1, area) >= ANNOTATION_TEXT_OVERLAP_KEEP_RATIO:
+            continue
+        inpaint_candidate[component] = 255
+        removed_components += 1
+        removed_pixels += area
+
+    if removed_pixels > 0:
+        inpaint_mask = cv2.dilate(inpaint_candidate, np.ones((3, 3), dtype="uint8"), iterations=1)
+        cleaned = cv2.inpaint(rgb, inpaint_mask, ANNOTATION_INPAINT_RADIUS, cv2.INPAINT_TELEA)
+    else:
+        cleaned = rgb.copy()
+
+    residual_mask = _build_annotation_mask_np(cleaned)
+    residual_ratio = float(np.count_nonzero(residual_mask)) / total
+    return Image.fromarray(cleaned, mode="RGB"), {
+        "method": "threshold-cc-inpaint",
+        "original_mark_ratio": marked_pixels / total,
+        "residual_mark_ratio": residual_ratio,
+        "removed_pixels": removed_pixels,
+        "removed_components": removed_components,
+    }
+
+
+def clean_annotations_with_rules(image: Image.Image) -> tuple[Image.Image, dict[str, Any]]:
+    return _remove_annotation_marks_with_cc(image)
+
+
+def should_use_annotation_saas_fallback(clean_stats: dict[str, Any]) -> tuple[bool, Optional[str]]:
+    original_ratio = float(clean_stats.get("original_mark_ratio", 0.0))
+    residual_ratio = float(clean_stats.get("residual_mark_ratio", 0.0))
+    removed_pixels = int(clean_stats.get("removed_pixels", 0))
+    alpha_ratio = clean_stats.get("alpha_ratio")
+    cutout_area_ratio = clean_stats.get("cutout_area_ratio")
+
+    if original_ratio < ANNOTATION_FALLBACK_ORIGINAL_RATIO_MIN:
+        if alpha_ratio is not None and float(alpha_ratio) < DIAGRAM_CUTOUT_ALPHA_MIN_RATIO:
+            return True, "cutout_alpha_too_low"
+        return False, None
+
+    if removed_pixels < ANNOTATION_FALLBACK_MIN_REMOVED_PIXELS:
+        return True, "local_removed_too_little"
+
+    if original_ratio > 0:
+        remaining_share = residual_ratio / original_ratio
+        if remaining_share > ANNOTATION_FALLBACK_RESIDUAL_RATIO_MAX:
+            return True, "local_residual_too_high"
+
+    if alpha_ratio is not None and float(alpha_ratio) < DIAGRAM_CUTOUT_ALPHA_MIN_RATIO:
+        return True, "cutout_alpha_too_low"
+    if cutout_area_ratio is not None and float(cutout_area_ratio) < DIAGRAM_CUTOUT_MIN_AREA_RATIO * 0.45:
+        return True, "cutout_area_too_small"
+
+    return False, None
 
 
 def _flatten_background_to_white(image: Image.Image) -> Image.Image:
@@ -398,8 +663,7 @@ def _extract_diagram_cutout(image: Image.Image) -> Image.Image:
             or b["max_y"] + pad_y < a["min_y"]
         )
 
-    best_cluster = None
-    best_score = -1.0
+    clusters = []
     for i in range(n):
         if visited_cluster[i]:
             continue
@@ -431,16 +695,45 @@ def _extract_diagram_cutout(image: Image.Image) -> Image.Image:
             else 1.0
         )
         score = cluster_area * compactness * upper_bias
-        if score > best_score:
-            best_score = score
-            best_cluster = indices
+        clusters.append(
+            {
+                "indices": indices,
+                "score": score,
+                "min_x": min_x,
+                "max_x": max_x,
+                "min_y": min_y,
+                "max_y": max_y,
+            }
+        )
 
-    if not best_cluster:
+    if not clusters:
         return image.convert("RGBA")
+
+    primary = max(clusters, key=lambda item: item["score"])
+    selected_component_indices = set(primary["indices"])
+    max_gap_x = int(width * DIAGRAM_CLUSTER_SECONDARY_X_GAP_RATIO)
+    max_gap_y = int(height * DIAGRAM_CLUSTER_SECONDARY_Y_GAP_RATIO)
+
+    # 把与主簇空间接近、分数足够的次级簇一起纳入，避免图形被截成单一块。
+    for cluster in clusters:
+        if cluster is primary:
+            continue
+        if cluster["score"] < primary["score"] * DIAGRAM_CLUSTER_SECONDARY_SCORE_RATIO:
+            continue
+        x_gap = max(
+            0,
+            max(primary["min_x"] - cluster["max_x"], cluster["min_x"] - primary["max_x"]),
+        )
+        y_gap = max(
+            0,
+            max(primary["min_y"] - cluster["max_y"], cluster["min_y"] - primary["max_y"]),
+        )
+        if x_gap <= max_gap_x and y_gap <= max_gap_y:
+            selected_component_indices.update(cluster["indices"])
 
     alpha = Image.new("L", (width, height), 0)
     alpha_px = alpha.load()
-    for idx in best_cluster:
+    for idx in selected_component_indices:
         for p in filtered[idx]["pixels"]:
             py, px = divmod(p, width)
             alpha_px[px, py] = 255
@@ -462,6 +755,39 @@ def _extract_diagram_cutout(image: Image.Image) -> Image.Image:
     rgb = image.convert("RGBA").crop((left, top, right, bottom))
     rgb.putalpha(alpha)
     return rgb
+
+
+def _alpha_coverage_ratio(image: Image.Image) -> float:
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    non_transparent = sum(1 for value in alpha.getdata() if value > 0)
+    total = max(1, rgba.width * rgba.height)
+    return non_transparent / total
+
+
+def _extract_diagram_cutout_relaxed(image: Image.Image) -> Image.Image:
+    """
+    Relaxed fallback mask when strict component clustering is too sparse.
+    """
+    gray = image.convert("L")
+    threshold = min(245, _compute_otsu_threshold(gray) + 28)
+    mask = gray.point(lambda value: 255 if value < threshold else 0, mode="L")
+    mask = mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+    bbox = mask.getbbox()
+    if not bbox:
+        return image.convert("RGBA")
+
+    width, height = gray.size
+    pad_x = max(DIAGRAM_CUTOUT_PAD_X_MIN, int(width * DIAGRAM_CUTOUT_PAD_X_RATIO))
+    pad_y = max(DIAGRAM_CUTOUT_PAD_Y_MIN, int(height * DIAGRAM_CUTOUT_PAD_Y_RATIO))
+    left = max(0, bbox[0] - pad_x)
+    top = max(0, bbox[1] - pad_y)
+    right = min(width, bbox[2] + pad_x)
+    bottom = min(height, bbox[3] + pad_y)
+    alpha = mask.crop((left, top, right, bottom))
+    rgba = image.convert("RGBA").crop((left, top, right, bottom))
+    rgba.putalpha(alpha)
+    return rgba
 
 
 def _find_foreground_segment(
@@ -696,14 +1022,14 @@ def normalize_image_box_for_source(
     return _clamp_image_box(chosen, image_width, image_height)
 
 
-def crop_diagram_image(
+def crop_diagram_image_with_metadata(
     image_bytes: bytes,
     ymin: int,
     xmin: int,
     ymax: int,
     xmax: int,
     max_size: Optional[tuple[int, int]] = (800, 800),
-) -> tuple[bytes, int, int]:
+) -> tuple[bytes, int, int, dict[str, Any]]:
     """
     针对题内图示的裁剪：
     - 先按 image_box 粗裁
@@ -723,7 +1049,7 @@ def crop_diagram_image(
             raise ValueError("Invalid crop coordinates")
 
         cropped = img.crop((xmin, ymin, xmax, ymax))
-        cleaned = _remove_red_pen_marks(cropped)
+        cleaned, clean_stats = clean_annotations_with_rules(cropped)
         normalized = _flatten_background_to_white(cleaned)
         # Diagram may appear in the lower half; avoid top-biased trimming here.
         tightened = _tighten_to_foreground(
@@ -732,32 +1058,70 @@ def crop_diagram_image(
             trim_bottom_on_tall=False,
         )
         cutout = _extract_diagram_cutout(tightened)
+        alpha_ratio = _alpha_coverage_ratio(cutout)
 
         source_area = max(1, tightened.width * tightened.height)
         cutout_area = max(1, cutout.width * cutout.height)
-        # 若抠图相对候选框过小，回退到放宽版，避免图示主体被截得太少。
-        if cutout_area / source_area < DIAGRAM_CUTOUT_MIN_AREA_RATIO:
-            cutout = tightened.convert("RGBA")
+        if alpha_ratio < DIAGRAM_CUTOUT_ALPHA_MIN_RATIO:
+            relaxed = _extract_diagram_cutout_relaxed(tightened)
+            relaxed_alpha_ratio = _alpha_coverage_ratio(relaxed)
+            if relaxed_alpha_ratio > alpha_ratio:
+                cutout = relaxed
+                alpha_ratio = relaxed_alpha_ratio
+                cutout_area = max(1, cutout.width * cutout.height)
 
-        # Export white background output so users can use it directly in cards/PDF.
-        final_image = _composite_on_white(cutout)
+        # 若抠图相对候选框过小且前景覆盖也偏低，使用放宽版掩码避免主体丢失。
+        if cutout_area / source_area < DIAGRAM_CUTOUT_MIN_AREA_RATIO and alpha_ratio < 0.10:
+            relaxed = _extract_diagram_cutout_relaxed(tightened)
+            relaxed_alpha_ratio = _alpha_coverage_ratio(relaxed)
+            if relaxed_alpha_ratio >= alpha_ratio:
+                cutout = relaxed
+                alpha_ratio = relaxed_alpha_ratio
+                cutout_area = max(1, cutout.width * cutout.height)
+
+        # Keep transparent alpha so result follows real glyph/shape contours.
+        final_image = cutout.convert("RGBA")
         result_bytes, out_w, out_h = _save_png_bytes(final_image, max_size=max_size)
 
+        clean_stats["alpha_ratio"] = round(alpha_ratio, 4)
+        clean_stats["cutout_area_ratio"] = round(cutout_area / source_area, 4)
+
         logger.info(
-            "Cropped diagram image: (%d,%d,%d,%d) -> %dx%d",
+            "Cropped diagram image: (%d,%d,%d,%d) -> %dx%d alpha_ratio=%.4f cutout_area_ratio=%.4f",
             ymin,
             xmin,
             ymax,
             xmax,
             out_w,
             out_h,
+            alpha_ratio,
+            cutout_area / source_area,
         )
-        return result_bytes, out_w, out_h
+        return result_bytes, out_w, out_h, clean_stats
     except ValueError:
         raise
     except Exception as exc:
         logger.exception("Diagram crop failed")
         raise RuntimeError(f"Diagram crop failed: {str(exc)}") from exc
+
+
+def crop_diagram_image(
+    image_bytes: bytes,
+    ymin: int,
+    xmin: int,
+    ymax: int,
+    xmax: int,
+    max_size: Optional[tuple[int, int]] = (800, 800),
+) -> tuple[bytes, int, int]:
+    result_bytes, out_w, out_h, _ = crop_diagram_image_with_metadata(
+        image_bytes,
+        ymin,
+        xmin,
+        ymax,
+        xmax,
+        max_size=max_size,
+    )
+    return result_bytes, out_w, out_h
 
 
 def crop_image(

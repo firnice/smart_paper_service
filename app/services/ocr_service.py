@@ -6,13 +6,17 @@ import logging
 import re
 import time
 from typing import Optional
-from urllib import error, request
 
 from PIL import Image, ImageOps
 
-from app.core.llm_settings import load_llm_settings
 from app.schemas.common import ImageBox
 from app.schemas.ocr import OcrItem
+from app.services.llm_client_service import (
+    LlmClientError,
+    LlmHttpError,
+    LlmNetworkError,
+    get_siliconflow_client,
+)
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -275,8 +279,8 @@ def _call_vision_completion(
     user_prompt: str,
     temperature: float = 0.2,
 ) -> str:
-    settings = load_llm_settings()
-    if not settings or not settings.ocr_model:
+    client = get_siliconflow_client()
+    if not client or not client.ocr_model:
         logger.error("OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
         raise RuntimeError("SILICONFLOW OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
 
@@ -292,7 +296,6 @@ def _call_vision_completion(
         logger.warning("Failed to build scaled OCR retry candidate: %s", str(exc))
         retry_candidates.append(("orig-low", image_bytes, content_type, "low"))
 
-    api_url = f"{settings.base_url}/chat/completions"
     total_attempts = len(retry_candidates)
     last_error_message = "OCR request failed."
 
@@ -300,7 +303,7 @@ def _call_vision_completion(
         encoded = base64.b64encode(candidate_bytes).decode("utf-8")
         data_url = f"data:{candidate_content_type};base64,{encoded}"
         payload = {
-            "model": settings.ocr_model,
+            "model": client.ocr_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -313,33 +316,25 @@ def _call_vision_completion(
             ],
             "temperature": temperature,
         }
-        data = json.dumps(payload).encode("utf-8")
-        req = request.Request(
-            api_url,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {settings.api_key}",
-            },
-            method="POST",
-        )
 
         logger.info(
             "OCR request start attempt=%d/%d tag=%s model=%s bytes=%d detail=%s filename=%s timeout=%ss",
             index,
             total_attempts,
             tag,
-            settings.ocr_model,
+            client.ocr_model,
             len(candidate_bytes),
             detail,
             file_name,
-            settings.timeout_seconds,
+            client.base_client.timeout_seconds,
         )
         start_time = time.monotonic()
 
         try:
-            with request.urlopen(req, timeout=settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            body = client.base_client.chat_completions(
+                payload,
+                trace_id=f"ocr:{file_name}:{tag}:{index}",
+            )
             content = (
                 body.get("choices", [{}])[0]
                 .get("message", {})
@@ -355,17 +350,17 @@ def _call_vision_completion(
                 elapsed,
             )
             return content
-        except error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
+        except LlmHttpError as exc:
+            body_text = exc.body
             elapsed = time.monotonic() - start_time
-            retryable = _is_retryable_ocr_http_error(exc.code, body_text)
+            retryable = _is_retryable_ocr_http_error(exc.status_code, body_text)
             has_next = index < total_attempts
             logger.error(
                 "OCR HTTP error attempt=%d/%d tag=%s status=%s retryable=%s elapsed=%.2fs body=%s",
                 index,
                 total_attempts,
                 tag,
-                exc.code,
+                exc.status_code,
                 retryable and has_next,
                 elapsed,
                 body_text,
@@ -375,9 +370,9 @@ def _call_vision_completion(
             if retryable:
                 last_error_message = "OCR 上游服务暂时异常，请稍后重试。"
             else:
-                last_error_message = f"OCR request failed ({exc.code})."
+                last_error_message = f"OCR request failed ({exc.status_code})."
             raise RuntimeError(last_error_message) from exc
-        except (TimeoutError, error.URLError, http.client.RemoteDisconnected, ConnectionError) as exc:
+        except (LlmNetworkError, http.client.RemoteDisconnected, ConnectionError) as exc:
             elapsed = time.monotonic() - start_time
             has_next = index < total_attempts
             logger.warning(
@@ -396,6 +391,8 @@ def _call_vision_completion(
                 "or increase SILICONFLOW_TIMEOUT_SECONDS."
             )
             raise RuntimeError(last_error_message) from exc
+        except LlmClientError as exc:
+            raise RuntimeError(f"OCR request failed: {str(exc)}") from exc
 
     raise RuntimeError(last_error_message)
 

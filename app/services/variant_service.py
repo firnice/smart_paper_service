@@ -1,9 +1,8 @@
 import json
 import re
 from typing import Optional
-from urllib import error, request
 
-from app.core.llm_settings import load_llm_settings
+from app.services.llm_client_service import LlmClientError, get_siliconflow_client
 
 
 SYSTEM_PROMPT = (
@@ -46,8 +45,8 @@ def generate_variants(
     subject: Optional[str] = None,
 ) -> list[str]:
     """Generate same-type variants via SiliconFlow."""
-    settings = load_llm_settings()
-    if not settings or not settings.model:
+    client = get_siliconflow_client()
+    if not client or not client.default_model:
         raise RuntimeError("SILICONFLOW config missing. Please set SILICONFLOW_MODEL.")
 
     user_prompt = f"Source question: {source_text}\n"
@@ -58,34 +57,20 @@ def generate_variants(
     user_prompt += f"Return {count} variants."
 
     payload = {
-        "model": settings.model,
+        "model": client.default_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.7,
     }
-
-    data = json.dumps(payload).encode("utf-8")
-    api_url = f"{settings.base_url}/chat/completions"
-    req = request.Request(
-        api_url,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.api_key}",
-        },
-        method="POST",
-    )
-
     try:
-        with request.urlopen(req, timeout=settings.timeout_seconds) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8")
-        raise RuntimeError(f"LLM request failed ({exc.code}): {detail}") from exc
-    except error.URLError as exc:
-        raise RuntimeError(f"LLM request failed: {exc.reason}") from exc
+        body = client.base_client.chat_completions(
+            payload,
+            trace_id="variant_generate",
+        )
+    except LlmClientError as exc:
+        raise RuntimeError(f"LLM request failed: {str(exc)}") from exc
 
     content = (
         body.get("choices", [{}])[0]

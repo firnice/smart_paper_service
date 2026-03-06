@@ -76,6 +76,34 @@ class LocalStorageService:
 
         return f"{self.base_url}/questions/{filename}"
 
+    def upload_question_asset(
+        self,
+        file_bytes: bytes,
+        question_id: int,
+        index: int = 0,
+        suffix: str = ".png",
+    ) -> str:
+        """
+        上传题目资源（图片/SVG 等）。
+
+        Args:
+            file_bytes: 文件字节流
+            question_id: 题目 ID
+            index: 资源序号
+            suffix: 文件后缀（例如 .png / .svg）
+
+        Returns:
+            可访问的资源 URL
+        """
+        normalized_suffix = suffix if str(suffix).startswith(".") else f".{suffix}"
+        filename = f"q{question_id}_{index}_{uuid.uuid4().hex[:8]}{normalized_suffix}"
+        file_path = self.base_dir / "questions" / filename
+
+        file_path.write_bytes(file_bytes)
+        logger.info("Saved question asset: %s (%d bytes)", filename, len(file_bytes))
+
+        return f"{self.base_url}/questions/{filename}"
+
     def upload_export(self, file_bytes: bytes, job_id: str, format: str = "pdf") -> str:
         """
         上传导出文件
