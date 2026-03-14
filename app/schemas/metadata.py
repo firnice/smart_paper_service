@@ -15,7 +15,7 @@ class SubjectResponse(BaseModel):
     code: str
     name: str
     is_active: bool
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -35,7 +35,7 @@ class WrongQuestionCategoryResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -57,7 +57,7 @@ class ErrorReasonResponse(BaseModel):
     name: str
     description: Optional[str]
     category_id: Optional[int]
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
