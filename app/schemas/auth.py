@@ -5,9 +5,8 @@ from pydantic import BaseModel, Field
 
 
 class StudentLoginRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    student_no: Optional[str] = Field(default=None, max_length=64)
-    grade: Optional[str] = Field(default=None, max_length=20)
+    account: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=64)
 
 
 class StudentLoginStudentProfile(BaseModel):

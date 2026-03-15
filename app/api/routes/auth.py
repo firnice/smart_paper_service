@@ -15,6 +15,33 @@ from app.schemas.auth import (
 
 router = APIRouter()
 
+PRESET_STUDENT_ACCOUNTS = {
+    "test1": {
+        "password": "test1",
+        "name": "测试学生1",
+        "student_no": "TEST001",
+        "grade": "三年级",
+        "class_name": "1班",
+        "school_name": "实验小学",
+    },
+    "test2": {
+        "password": "test2",
+        "name": "测试学生2",
+        "student_no": "TEST002",
+        "grade": "四年级",
+        "class_name": "2班",
+        "school_name": "实验小学",
+    },
+    "test3": {
+        "password": "test3",
+        "name": "测试学生3",
+        "student_no": "TEST003",
+        "grade": "五年级",
+        "class_name": "1班",
+        "school_name": "实验小学",
+    },
+}
+
 
 def _to_login_response(student: User, message: str, created: bool = False) -> StudentLoginResponse:
     if not student.student_profile:
@@ -61,6 +88,8 @@ def _upsert_student_profile(
     user_id: int,
     student_no: str | None,
     grade: str,
+    class_name: str | None = None,
+    school_name: str | None = None,
 ) -> None:
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
     if profile:
@@ -68,6 +97,10 @@ def _upsert_student_profile(
             profile.student_no = student_no
         if grade and profile.grade in ("", "未设置"):
             profile.grade = grade
+        if class_name and not profile.class_name:
+            profile.class_name = class_name
+        if school_name and not profile.school_name:
+            profile.school_name = school_name
         return
 
     db.add(
@@ -75,42 +108,50 @@ def _upsert_student_profile(
             user_id=user_id,
             student_no=student_no,
             grade=grade,
+            class_name=class_name,
+            school_name=school_name,
         )
+    )
+
+
+def _find_student_by_student_no(db: Session, student_no: str) -> User | None:
+    return (
+        db.query(User)
+        .options(joinedload(User.student_profile))
+        .join(StudentProfile, StudentProfile.user_id == User.id)
+        .filter(
+            User.role == "student",
+            User.status == "active",
+            StudentProfile.student_no == student_no,
+        )
+        .first()
     )
 
 
 @router.post("/api/auth/student-login", response_model=StudentLoginResponse)
 def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student name is required",
-        )
+    account = payload.account.strip().lower()
+    password = payload.password.strip()
+    if not account or not password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Account and password are required")
 
-    students = (
-        db.query(User)
-        .options(joinedload(User.student_profile))
-        .filter(
-            User.role == "student",
-            User.status == "active",
-            User.name == name,
-        )
-        .order_by(User.id.asc())
-        .all()
-    )
+    preset = PRESET_STUDENT_ACCOUNTS.get(account)
+    if not preset or preset["password"] != password:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid student credentials")
 
-    # 简化体验：首次登录若不存在学生账号，则自动创建一个基础学生档案。
-    if not students:
-        user = User(name=name, role="student", status="active")
+    student = _find_student_by_student_no(db, preset["student_no"])
+    created = False
+    if not student:
+        user = User(name=preset["name"], role="student", status="active")
         db.add(user)
         db.flush()
-        grade = (payload.grade or "未设置").strip() or "未设置"
         _upsert_student_profile(
             db=db,
             user_id=user.id,
-            student_no=payload.student_no,
-            grade=grade,
+            student_no=preset["student_no"],
+            grade=preset["grade"],
+            class_name=preset.get("class_name"),
+            school_name=preset.get("school_name"),
         )
         try:
             db.commit()
@@ -121,55 +162,6 @@ def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
                 detail="Student profile conflict detected. Please clean orphan student profiles and retry.",
             ) from exc
         student = _reload_student(db, user.id)
-        return _to_login_response(student, message="首次登录成功，已创建学生档案", created=True)
+        created = True
 
-    # 若提供学号，优先按学号精确匹配；若学生档案未填学号，则自动回填。
-    if payload.student_no:
-        matched_by_no = [
-            item
-            for item in students
-            if item.student_profile and item.student_profile.student_no == payload.student_no
-        ]
-        if matched_by_no:
-            students = matched_by_no
-        elif len(students) == 1 and students[0].student_profile and not students[0].student_profile.student_no:
-            students[0].student_profile.student_no = payload.student_no
-            db.commit()
-            students = [_reload_student(db, students[0].id)]
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid student credentials",
-            )
-
-    if len(students) > 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Multiple students matched. Please provide student_no for verification.",
-        )
-
-    student = students[0]
-    if not student.student_profile:
-        _upsert_student_profile(
-            db=db,
-            user_id=student.id,
-            student_no=payload.student_no,
-            grade=(payload.grade or "未设置").strip() or "未设置",
-        )
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Student profile conflict detected. Please clean orphan student profiles and retry.",
-            ) from exc
-        student = _reload_student(db, student.id)
-
-    # 年级作为辅助信息：若档案仍为默认值则回填，不作为硬性拦截条件。
-    if payload.grade and student.student_profile and student.student_profile.grade in ("", "未设置"):
-        student.student_profile.grade = payload.grade
-        db.commit()
-        student = _reload_student(db, student.id)
-
-    return _to_login_response(student, message="Student login verified", created=False)
+    return _to_login_response(student, message="Student login verified", created=created)
