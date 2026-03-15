@@ -1,289 +1,258 @@
 from io import BytesIO
 from uuid import uuid4
 import logging
+from typing import Optional
+
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm, mm
+from reportlab.lib.units import cm
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, PageBreak,
-    Table, TableStyle, KeepTogether
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    PageBreak,
+    Table,
+    TableStyle,
+    KeepTogether,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib import colors
 
-from app.schemas.export import ExportResponse
+from app.schemas.export import ExportQuestionItem, ExportResponse
 
 logger = logging.getLogger("uvicorn.error")
 
 
-def _generate_pdf(
-    title: str,
-    original_text: str,
-    variants: list[str],
-    include_images: bool = False
-) -> bytes:
-    """
-    生成 PDF 字节流（改进版排版）
-
-    Args:
-        title: 文档标题
-        original_text: 原题文本
-        variants: 变式题列表
-        include_images: 是否包含图片（暂未实现）
-
-    Returns:
-        PDF 字节流
-    """
+def _base_doc_and_styles():
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=2.5*cm,
-        bottomMargin=2.5*cm,
-        leftMargin=2.5*cm,
-        rightMargin=2.5*cm,
+        topMargin=2.5 * cm,
+        bottomMargin=2.5 * cm,
+        leftMargin=2.5 * cm,
+        rightMargin=2.5 * cm,
     )
-
-    # 样式设置
     styles = getSampleStyleSheet()
 
-    # 自定义标题样式
     title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
+        "CustomTitle",
+        parent=styles["Heading1"],
         fontSize=20,
         alignment=TA_CENTER,
         spaceAfter=30,
         spaceBefore=10,
-        fontName='Helvetica-Bold',
-        textColor=colors.HexColor('#1a1a1a'),
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1a1a1a"),
     )
-
-    # 自定义大标题样式（原题/变式题）
     section_title_style = ParagraphStyle(
-        'SectionTitle',
-        parent=styles['Heading2'],
+        "SectionTitle",
+        parent=styles["Heading2"],
         fontSize=16,
         alignment=TA_LEFT,
         spaceAfter=15,
         spaceBefore=20,
-        fontName='Helvetica-Bold',
-        textColor=colors.HexColor('#333333'),
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#333333"),
         borderPadding=(5, 10, 5, 10),
-        backColor=colors.HexColor('#f0f0f0'),
+        backColor=colors.HexColor("#f0f0f0"),
     )
-
-    # 题目编号样式
     question_number_style = ParagraphStyle(
-        'QuestionNumber',
-        parent=styles['BodyText'],
+        "QuestionNumber",
+        parent=styles["BodyText"],
         fontSize=14,
-        fontName='Helvetica-Bold',
-        textColor=colors.HexColor('#0066cc'),
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#0066cc"),
         spaceAfter=8,
     )
-
-    # 题目内容样式
     question_content_style = ParagraphStyle(
-        'QuestionContent',
-        parent=styles['BodyText'],
+        "QuestionContent",
+        parent=styles["BodyText"],
         fontSize=12,
         alignment=TA_JUSTIFY,
-        leading=20,  # 行间距
-        leftIndent=20,  # 左缩进
+        leading=20,
+        leftIndent=20,
         spaceAfter=10,
     )
-
-    # 答题空间提示样式
     answer_space_style = ParagraphStyle(
-        'AnswerSpace',
-        parent=styles['BodyText'],
+        "AnswerSpace",
+        parent=styles["BodyText"],
         fontSize=10,
-        textColor=colors.HexColor('#999999'),
+        textColor=colors.HexColor("#999999"),
         leftIndent=20,
         spaceAfter=15,
     )
-
-    # 构建文档内容
-    story = []
-
-    # ===== 文档标题 =====
-    story.append(Paragraph(title, title_style))
-    story.append(Spacer(1, 0.5*cm))
-
-    # 添加装饰线
-    line_table = Table([['']], colWidths=[doc.width])
-    line_table.setStyle(TableStyle([
-        ('LINEBELOW', (0, 0), (-1, -1), 2, colors.HexColor('#0066cc')),
-    ]))
-    story.append(line_table)
-    story.append(Spacer(1, 1*cm))
-
-    # ===== 原题部分 =====
-    story.append(Paragraph("📝 原题", section_title_style))
-    story.append(Spacer(1, 0.5*cm))
-
-    # 原题框格
-    original_formatted = original_text.replace("\n", "<br/>")
-    question_box = [
-        [Paragraph(original_formatted, question_content_style)]
-    ]
-    question_table = Table(question_box, colWidths=[doc.width])
-    question_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fafafa')),
-        ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#cccccc')),
-        ('TOPPADDING', (0, 0), (-1, -1), 15),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
-        ('LEFTPADDING', (0, 0), (-1, -1), 15),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 15),
-    ]))
-    story.append(question_table)
-    story.append(Spacer(1, 0.3*cm))
-
-    # 答题空间提示
-    story.append(Paragraph("【答题区域】", answer_space_style))
-
-    # 答题空间（横线）
-    for _ in range(4):
-        line = Table([['_' * 80]], colWidths=[doc.width])
-        line.setStyle(TableStyle([
-            ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#dddddd')),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ]))
-        story.append(line)
-        story.append(Spacer(1, 0.3*cm))
-
-    story.append(Spacer(1, 1*cm))
-
-    # ===== 变式题部分 =====
-    if variants:
-        # 变式题可以分页
-        story.append(PageBreak())
-
-        story.append(Paragraph("🔄 变式题（举一反三）", section_title_style))
-        story.append(Spacer(1, 0.5*cm))
-
-        for i, variant in enumerate(variants, 1):
-            # 每道变式题用 KeepTogether 保持在同一页
-            question_elements = []
-
-            # 题号
-            question_elements.append(
-                Paragraph(f"<b>第 {i} 题</b>", question_number_style)
-            )
-
-            # 题目内容框格
-            variant_formatted = variant.replace("\n", "<br/>")
-            variant_box = [
-                [Paragraph(variant_formatted, question_content_style)]
-            ]
-            variant_table = Table(variant_box, colWidths=[doc.width])
-            variant_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9ff')),
-                ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#b3c6ff')),
-                ('TOPPADDING', (0, 0), (-1, -1), 15),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
-                ('LEFTPADDING', (0, 0), (-1, -1), 15),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 15),
-            ]))
-            question_elements.append(variant_table)
-            question_elements.append(Spacer(1, 0.3*cm))
-
-            # 答题空间
-            question_elements.append(
-                Paragraph("【答题区域】", answer_space_style)
-            )
-            for _ in range(4):
-                line = Table([['_' * 80]], colWidths=[doc.width])
-                line.setStyle(TableStyle([
-                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#dddddd')),
-                    ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ]))
-                question_elements.append(line)
-                question_elements.append(Spacer(1, 0.3*cm))
-
-            # 题目间距
-            question_elements.append(Spacer(1, 1*cm))
-
-            # 添加分隔线
-            if i < len(variants):
-                divider = Table([['']], colWidths=[doc.width])
-                divider.setStyle(TableStyle([
-                    ('LINEBELOW', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
-                ]))
-                question_elements.append(divider)
-                question_elements.append(Spacer(1, 1*cm))
-
-            # 使用 KeepTogether 保持每道题完整
-            story.append(KeepTogether(question_elements))
-
-    # 页脚说明
-    story.append(Spacer(1, 1*cm))
     footer_style = ParagraphStyle(
-        'Footer',
-        parent=styles['Normal'],
+        "Footer",
+        parent=styles["Normal"],
         fontSize=9,
         alignment=TA_CENTER,
-        textColor=colors.HexColor('#999999'),
+        textColor=colors.HexColor("#999999"),
     )
-    story.append(Paragraph("—— 智能错题本练习卷 ——", footer_style))
 
-    # 生成 PDF
+    return buffer, doc, {
+        "title": title_style,
+        "section": section_title_style,
+        "number": question_number_style,
+        "content": question_content_style,
+        "answer_space": answer_space_style,
+        "footer": footer_style,
+    }
+
+
+def _add_answer_lines(story, doc, count=4):
+    for _ in range(count):
+        line = Table([["_" * 80]], colWidths=[doc.width])
+        line.setStyle(
+            TableStyle([
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#dddddd")),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ])
+        )
+        story.append(line)
+        story.append(Spacer(1, 0.3 * cm))
+
+
+def _question_table(text: str, doc, content_style, background="#fafafa", border="#cccccc"):
+    formatted = (text or "").replace("\n", "<br/>")
+    table = Table([[Paragraph(formatted, content_style)]], colWidths=[doc.width])
+    table.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+            ("BOX", (0, 0), (-1, -1), 1.5, colors.HexColor(border)),
+            ("TOPPADDING", (0, 0), (-1, -1), 15),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 15),
+            ("LEFTPADDING", (0, 0), (-1, -1), 15),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 15),
+        ])
+    )
+    return table
+
+
+def _generate_single_pdf(
+    title: str,
+    original_text: str,
+    variants: list[str],
+    include_images: bool = False,
+) -> bytes:
+    buffer, doc, styles = _base_doc_and_styles()
+    story = []
+
+    story.append(Paragraph(title, styles["title"]))
+    story.append(Spacer(1, 0.5 * cm))
+
+    line_table = Table([[""]], colWidths=[doc.width])
+    line_table.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 2, colors.HexColor("#0066cc"))]))
+    story.append(line_table)
+    story.append(Spacer(1, 1 * cm))
+
+    story.append(Paragraph("📝 原题", styles["section"]))
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(_question_table(original_text, doc, styles["content"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("【答题区域】", styles["answer_space"]))
+    _add_answer_lines(story, doc)
+    story.append(Spacer(1, 1 * cm))
+
+    if variants:
+        story.append(PageBreak())
+        story.append(Paragraph("🔄 变式题（举一反三）", styles["section"]))
+        story.append(Spacer(1, 0.5 * cm))
+        for i, variant in enumerate(variants, 1):
+            question_elements = [Paragraph(f"<b>第 {i} 题</b>", styles["number"])]
+            question_elements.append(
+                _question_table(variant, doc, styles["content"], background="#f8f9ff", border="#b3c6ff")
+            )
+            question_elements.append(Spacer(1, 0.3 * cm))
+            question_elements.append(Paragraph("【答题区域】", styles["answer_space"]))
+            _add_answer_lines(question_elements, doc)
+            question_elements.append(Spacer(1, 1 * cm))
+            if i < len(variants):
+                divider = Table([[""]], colWidths=[doc.width])
+                divider.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#e0e0e0"))]))
+                question_elements.append(divider)
+                question_elements.append(Spacer(1, 1 * cm))
+            story.append(KeepTogether(question_elements))
+
+    story.append(Spacer(1, 1 * cm))
+    story.append(Paragraph("—— 智能错题本练习卷 ——", styles["footer"]))
     doc.build(story)
     buffer.seek(0)
+    return buffer.read()
 
-    logger.info(
-        "PDF generated: title=%s, variants=%d, size=%d bytes",
-        title,
-        len(variants),
-        buffer.getbuffer().nbytes
-    )
 
+def _generate_practice_sheet_pdf(
+    title: str,
+    question_items: list[ExportQuestionItem],
+    hide_answers: bool = True,
+) -> bytes:
+    buffer, doc, styles = _base_doc_and_styles()
+    story = []
+
+    story.append(Paragraph(title, styles["title"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("打印重做包（线下重做优先）", styles["section"]))
+    story.append(Spacer(1, 0.4 * cm))
+
+    for index, item in enumerate(question_items, 1):
+        block = []
+        title_line = item.title or f"错题 {index}"
+        meta_parts = [part for part in [item.subject, item.category] if part]
+        if meta_parts:
+            title_line += f"（{' / '.join(meta_parts)}）"
+        block.append(Paragraph(f"<b>第 {index} 题 · {title_line}</b>", styles["number"]))
+        block.append(_question_table(item.content, doc, styles["content"]))
+        block.append(Spacer(1, 0.2 * cm))
+        if hide_answers:
+            block.append(Paragraph("【作答区】", styles["answer_space"]))
+            _add_answer_lines(block, doc, count=5)
+        if index < len(question_items):
+            block.append(Spacer(1, 0.5 * cm))
+            divider = Table([[""]], colWidths=[doc.width])
+            divider.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#e0e0e0"))]))
+            block.append(divider)
+            block.append(Spacer(1, 0.8 * cm))
+        story.append(KeepTogether(block))
+
+    story.append(Spacer(1, 0.8 * cm))
+    story.append(Paragraph("—— 智能错题本打印重做包 ——", styles["footer"]))
+    doc.build(story)
+    buffer.seek(0)
     return buffer.read()
 
 
 def create_export(
     title: str,
-    original_text: str,
+    original_text: Optional[str],
     variants: list[str],
     include_images: bool,
+    mode: str = "single",
+    question_items: Optional[list[ExportQuestionItem]] = None,
+    hide_answers: bool = True,
 ) -> ExportResponse:
-    """
-    创建导出任务（同步生成 PDF）
-
-    Args:
-        title: 文档标题
-        original_text: 原题文本
-        variants: 变式题列表
-        include_images: 是否包含图片
-
-    Returns:
-        导出响应（包含下载 URL）
-    """
     from app.services.storage_service import get_storage_service
 
     job_id = str(uuid4())
+    question_items = question_items or []
 
     try:
-        # 生成 PDF
-        pdf_bytes = _generate_pdf(title, original_text, variants, include_images)
+        if question_items:
+            pdf_bytes = _generate_practice_sheet_pdf(title, question_items, hide_answers=hide_answers)
+        else:
+            pdf_bytes = _generate_single_pdf(title, original_text or "", variants, include_images)
 
-        # 上传到存储
         storage = get_storage_service()
         download_url = storage.upload_export(pdf_bytes, job_id, format="pdf")
 
-        logger.info("Export completed: job_id=%s url=%s", job_id, download_url)
-
-        return ExportResponse(
-            job_id=job_id,
-            status="completed",
-            download_url=download_url,
+        logger.info(
+            "Export completed: job_id=%s mode=%s questions=%d url=%s",
+            job_id,
+            mode,
+            len(question_items),
+            download_url,
         )
 
-    except Exception as e:
-        logger.exception("Export failed: job_id=%s", job_id)
-        return ExportResponse(
-            job_id=job_id,
-            status="failed",
-            download_url=None,
-        )
+        return ExportResponse(job_id=job_id, status="completed", download_url=download_url)
+    except Exception:
+        logger.exception("Export failed: job_id=%s mode=%s", job_id, mode)
+        return ExportResponse(job_id=job_id, status="failed", download_url=None)
