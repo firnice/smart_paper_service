@@ -36,6 +36,8 @@ class WrongQuestion(Base):
     error_count = Column(Integer, default=1)
     is_bookmarked = Column(Boolean, default=False)
     notes = Column(Text, nullable=True)
+    image_url = Column(Text, nullable=True)
+    image_name = Column(String(255), nullable=True)
     first_error_date = Column(Date, default=func.current_date())
     last_review_date = Column(Date, nullable=True)
     last_practice_result = Column(String(20), nullable=True)

@@ -232,6 +232,8 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         error_count=payload.error_count,
         is_bookmarked=payload.is_bookmarked,
         notes=payload.notes,
+        image_url=payload.image_url,
+        image_name=payload.image_name,
         first_error_date=payload.first_error_date or date.today(),
     )
     db.add(wrong_question)

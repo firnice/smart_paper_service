@@ -40,6 +40,8 @@ class WrongQuestionUpdate(BaseModel):
     error_count: Optional[int] = Field(default=None, ge=1)
     is_bookmarked: Optional[bool] = None
     notes: Optional[str] = None
+    image_url: Optional[str] = None
+    image_name: Optional[str] = Field(default=None, max_length=255)
     first_error_date: Optional[date] = None
     last_review_date: Optional[date] = None
     paper_id: Optional[int] = None
@@ -90,6 +92,8 @@ class WrongQuestionResponse(BaseModel):
     error_count: int
     is_bookmarked: bool
     notes: Optional[str]
+    image_url: Optional[str]
+    image_name: Optional[str]
     first_error_date: Optional[date]
     last_review_date: Optional[date]
     last_practice_result: Optional[str]
