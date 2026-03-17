@@ -8,6 +8,7 @@ class ExportQuestionItem(BaseModel):
     content: str = Field(..., min_length=1)
     subject: Optional[str] = None
     category: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class ExportRequest(BaseModel):

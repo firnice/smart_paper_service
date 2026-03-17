@@ -2,6 +2,11 @@ from io import BytesIO
 from uuid import uuid4
 import logging
 from typing import Optional
+from pathlib import Path
+from urllib.parse import urlparse, unquote
+import mimetypes
+
+from reportlab.lib.utils import ImageReader
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
@@ -13,6 +18,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     KeepTogether,
+    Image,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
@@ -21,6 +27,50 @@ from reportlab.lib import colors
 from app.schemas.export import ExportQuestionItem, ExportResponse
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _resolve_local_image_bytes(image_url: Optional[str]) -> Optional[bytes]:
+    if not image_url:
+        return None
+    value = str(image_url).strip()
+    if not value:
+        return None
+    if value.startswith("data:"):
+        header, _, data = value.partition(",")
+        if not data:
+            return None
+        import base64
+        return base64.b64decode(data)
+
+    parsed = urlparse(value)
+    path = unquote(parsed.path or "")
+    if not path:
+        return None
+
+    static_marker = "/static/"
+    if static_marker not in path:
+        return None
+
+    relative_path = path.split(static_marker, 1)[1].lstrip("/")
+    from app.core.config import settings
+    storage_root = Path(settings.storage_base_dir).resolve()
+    file_path = (storage_root / relative_path).resolve()
+    try:
+        file_path.relative_to(storage_root)
+    except ValueError:
+        return None
+    if not file_path.is_file():
+        return None
+    return file_path.read_bytes()
+
+
+def _build_question_image(image_url: Optional[str], max_width: float, max_height: float):
+    image_bytes = _resolve_local_image_bytes(image_url)
+    if not image_bytes:
+        return None
+    image = Image(BytesIO(image_bytes))
+    image._restrictSize(max_width, max_height)
+    return image
 
 
 def _base_doc_and_styles():
@@ -201,6 +251,10 @@ def _generate_practice_sheet_pdf(
         if meta_parts:
             title_line += f"（{' / '.join(meta_parts)}）"
         block.append(Paragraph(f"<b>第 {index} 题 · {title_line}</b>", styles["number"]))
+        question_image = _build_question_image(item.image_url, doc.width, 7 * cm)
+        if question_image is not None:
+            block.append(question_image)
+            block.append(Spacer(1, 0.25 * cm))
         block.append(_question_table(item.content, doc, styles["content"]))
         block.append(Spacer(1, 0.2 * cm))
         if hide_answers:
