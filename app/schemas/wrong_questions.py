@@ -19,6 +19,8 @@ class WrongQuestionCreate(BaseModel):
     error_count: int = Field(default=1, ge=1)
     is_bookmarked: bool = False
     notes: Optional[str] = None
+    image_url: Optional[str] = None
+    image_name: Optional[str] = Field(default=None, max_length=255)
     first_error_date: Optional[date] = None
     paper_id: Optional[int] = None
     question_id: Optional[int] = None
