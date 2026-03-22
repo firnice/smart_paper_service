@@ -174,6 +174,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         error_count=item.error_count,
         is_bookmarked=item.is_bookmarked,
         notes=item.notes,
+        image_url=item.image_url,
+        image_name=item.image_name,
         first_error_date=item.first_error_date,
         last_review_date=item.last_review_date,
         last_practice_result=item.last_practice_result,
