@@ -40,7 +40,13 @@ def _resolve_local_image_bytes(image_url: Optional[str]) -> Optional[bytes]:
         if not data:
             return None
         import base64
-        return base64.b64decode(data)
+        from urllib.parse import unquote_to_bytes
+        try:
+            if ";base64" in header:
+                return base64.b64decode(data)
+            return unquote_to_bytes(data)
+        except Exception:
+            return None
 
     parsed = urlparse(value)
     path = unquote(parsed.path or "")
@@ -68,9 +74,13 @@ def _build_question_image(image_url: Optional[str], max_width: float, max_height
     image_bytes = _resolve_local_image_bytes(image_url)
     if not image_bytes:
         return None
-    image = Image(BytesIO(image_bytes))
-    image._restrictSize(max_width, max_height)
-    return image
+    try:
+        image = Image(BytesIO(image_bytes))
+        image._restrictSize(max_width, max_height)
+        return image
+    except Exception:
+        logger.warning("Skip unsupported export image: %s", str(image_url)[:200])
+        return None
 
 
 def _base_doc_and_styles():
