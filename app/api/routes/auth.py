@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import StudentProfile, User
 from app.db.session import get_db
+from app.core.config import settings
 from app.schemas.auth import (
+    StudentLoginConfigResponse,
+    StudentLoginPresetAccount,
     StudentLoginRequest,
     StudentLoginResponse,
     StudentLoginStudent,
@@ -41,6 +44,38 @@ PRESET_STUDENT_ACCOUNTS = {
         "school_name": "实验小学",
     },
 }
+
+
+def _build_login_config() -> StudentLoginConfigResponse:
+    mode = (settings.student_login_mode or "preset").strip().lower()
+    show_presets = bool(settings.student_login_show_presets and mode == "preset")
+
+    if show_presets:
+        presets = [
+            StudentLoginPresetAccount(
+                account=account,
+                password=str(meta.get("password", "")),
+                note=f"{meta.get('name', account)} / {meta.get('grade', '未分级')}",
+            )
+            for account, meta in PRESET_STUDENT_ACCOUNTS.items()
+        ]
+        return StudentLoginConfigResponse(
+            mode="preset",
+            show_presets=True,
+            title="学生账号登录",
+            subtitle="当前为联调登录入口，可使用预置账号快速进入学生端。",
+            help_text="登录后进入首页、工作台、打印与练习回填等真实页面；上线时可关闭预置账号展示。",
+            preset_accounts=presets,
+        )
+
+    return StudentLoginConfigResponse(
+        mode=mode or "managed",
+        show_presets=False,
+        title="学生登录",
+        subtitle="请输入学校分配的学生账号与密码。",
+        help_text="当前页面已按正式登录入口展示，不再暴露联调测试账号。",
+        preset_accounts=[],
+    )
 
 
 def _to_login_response(student: User, message: str, created: bool = False) -> StudentLoginResponse:
@@ -126,6 +161,11 @@ def _find_student_by_student_no(db: Session, student_no: str) -> User | None:
         )
         .first()
     )
+
+
+@router.get("/api/auth/student-login-config", response_model=StudentLoginConfigResponse)
+def student_login_config():
+    return _build_login_config()
 
 
 @router.post("/api/auth/student-login", response_model=StudentLoginResponse)

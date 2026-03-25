@@ -35,6 +35,14 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_str(name: str, default: str) -> str:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip()
+    return value if value else default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "Smart Paper Service"
@@ -77,6 +85,10 @@ class Settings:
     enable_rebuild_json: bool = _env_bool("ENABLE_REBUILD_JSON", False)
     rebuild_confidence_threshold: float = _env_float("REBUILD_CONFIDENCE_THRESHOLD", 0.80)
     force_manual_refine_on_low_conf: bool = _env_bool("FORCE_MANUAL_REFINE_ON_LOW_CONF", True)
+
+    # Student login surface
+    student_login_mode: str = _env_str("STUDENT_LOGIN_MODE", "preset")
+    student_login_show_presets: bool = _env_bool("STUDENT_LOGIN_SHOW_PRESETS", True)
 
 
 settings = Settings()

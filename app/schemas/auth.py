@@ -31,3 +31,18 @@ class StudentLoginResponse(BaseModel):
     created: bool = False
     session_token: str
     student: StudentLoginStudent
+
+
+class StudentLoginPresetAccount(BaseModel):
+    account: str
+    password: str
+    note: str
+
+
+class StudentLoginConfigResponse(BaseModel):
+    mode: str
+    show_presets: bool = False
+    title: str
+    subtitle: str
+    help_text: str
+    preset_accounts: list[StudentLoginPresetAccount] = []
