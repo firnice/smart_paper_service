@@ -189,7 +189,7 @@ def _question_table(text: str, doc, content_style, background="#fafafa", border=
     return table
 
 
-def _generate_single_pdf(
+def _generate_pdf(
     title: str,
     original_text: str,
     variants: list[str],
@@ -303,7 +303,7 @@ def create_export(
         if question_items:
             pdf_bytes = _generate_practice_sheet_pdf(title, question_items, hide_answers=hide_answers)
         else:
-            pdf_bytes = _generate_single_pdf(title, original_text or "", variants, include_images)
+            pdf_bytes = _generate_pdf(title, original_text or "", variants, include_images)
 
         storage = get_storage_service()
         download_url = storage.upload_export(pdf_bytes, job_id, format="pdf")
