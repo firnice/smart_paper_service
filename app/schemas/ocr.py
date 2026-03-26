@@ -81,3 +81,17 @@ class DiagramSvgGenerateRequest(BaseModel):
 
 class DiagramSvgGenerateResponse(BaseModel):
     diagram_svg_url: Optional[str] = None
+
+
+class QuestionAnalyzeRequest(BaseModel):
+    """题目分析请求：根据题目内容推断学科、分类、错因"""
+    question_text: str
+    grade: str = ""
+
+
+class QuestionAnalyzeResponse(BaseModel):
+    """题目分析响应"""
+    subject: Optional[str] = None
+    category: Optional[str] = None
+    error_reason: Optional[str] = None
+    title: Optional[str] = None

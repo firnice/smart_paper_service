@@ -2,13 +2,13 @@ import base64
 import http.client
 from io import BytesIO
 import json
-import logging
 import re
 import time
 from typing import Optional
 
 from PIL import Image, ImageOps
 
+from app.core.logger import logger
 from app.schemas.common import ImageBox
 from app.schemas.ocr import OcrItem
 from app.services.llm_client_service import (
@@ -17,9 +17,6 @@ from app.services.llm_client_service import (
     LlmNetworkError,
     get_siliconflow_client,
 )
-
-
-logger = logging.getLogger("uvicorn.error")
 
 SYSTEM_PROMPT = (
     "You are a primary school worksheet digitizer. "

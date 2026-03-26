@@ -1,9 +1,8 @@
 import uuid
-import logging
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("uvicorn.error")
+from app.core.logger import logger
 
 
 class LocalStorageService:

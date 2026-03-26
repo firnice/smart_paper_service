@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import subprocess
 from typing import Any, Optional
 from PIL import Image, ImageFilter, ImageOps
-import logging
+from app.core.logger import logger
 from app.schemas.common import ImageBox
 
 try:
@@ -13,8 +13,6 @@ try:
 except Exception:  # pragma: no cover - optional runtime dependency
     cv2 = None
     np = None
-
-logger = logging.getLogger("uvicorn.error")
 
 # Centralized tuning parameters for OCR image cleanup and diagram extraction.
 # Keep these values in one place so we can iterate without changing algorithm flow.

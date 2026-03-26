@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import http.client
-import json
-import logging
-import re
 from dataclasses import dataclass
 from typing import Any, Optional
-from urllib import error, request
 
 from app.core.llm_settings import load_llm_settings, load_whatai_settings
 
-
-logger = logging.getLogger("uvicorn.error")
-
-_MAX_LOG_CHARS = 2800
+from app.services.http_client import (
+    HttpClientError,
+    HttpNetworkError,
+    HttpStatusError,
+    post_json,
+)
 
 
 class LlmClientError(RuntimeError):
@@ -31,45 +28,8 @@ class LlmNetworkError(LlmClientError):
     pass
 
 
-def _truncate(value: str, max_chars: int = _MAX_LOG_CHARS) -> str:
-    text = str(value or "")
-    if len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars]} ...[truncated {len(text) - max_chars} chars]"
-
-
-def _sanitize_for_log(payload: Any) -> Any:
-    if isinstance(payload, dict):
-        result: dict[str, Any] = {}
-        for key, value in payload.items():
-            lowered = str(key).lower()
-            if lowered in {"authorization", "api_key", "apikey", "token"}:
-                result[key] = "***"
-            else:
-                result[key] = _sanitize_for_log(value)
-        return result
-    if isinstance(payload, list):
-        return [_sanitize_for_log(item) for item in payload]
-    if isinstance(payload, str):
-        if payload.startswith("data:image/") and ";base64," in payload:
-            prefix, _, raw = payload.partition(";base64,")
-            return f"{prefix};base64,[{len(raw)} chars]"
-        if re.match(r"^[A-Za-z0-9+/=]{500,}$", payload):
-            return f"[base64 text {len(payload)} chars]"
-        return _truncate(payload, max_chars=900)
-    return payload
-
-
-def _to_json_preview(payload: Any) -> str:
-    try:
-        encoded = json.dumps(_sanitize_for_log(payload), ensure_ascii=False)
-    except Exception:
-        encoded = str(payload)
-    return _truncate(encoded, max_chars=_MAX_LOG_CHARS)
-
-
 class BaseLlmClient:
-    """Common OpenAI-compatible client with baseline IO logging."""
+    """Common OpenAI-compatible client — delegates IO to http_client."""
 
     def __init__(self, *, provider: str, base_url: str, api_key: str, timeout_seconds: int = 180):
         self.provider = provider
@@ -79,56 +39,20 @@ class BaseLlmClient:
 
     def chat_completions(self, payload: dict[str, Any], *, trace_id: str) -> dict[str, Any]:
         endpoint = f"{self.base_url}/chat/completions"
-        logger.info(
-            "LLM request provider=%s trace_id=%s endpoint=%s payload=%s",
-            self.provider,
-            trace_id,
-            endpoint,
-            _to_json_preview(payload),
-        )
-
-        req = request.Request(
-            endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-        except error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            logger.error(
-                "LLM HTTP error provider=%s trace_id=%s status=%s body=%s",
-                self.provider,
-                trace_id,
-                exc.code,
-                _truncate(body),
+            return post_json(
+                endpoint,
+                payload,
+                trace_id=f"{self.provider}:{trace_id}",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout_seconds=self.timeout_seconds,
             )
-            raise LlmHttpError(status_code=int(exc.code), body=body) from exc
-        except (TimeoutError, error.URLError, http.client.HTTPException, ConnectionError) as exc:
-            logger.warning(
-                "LLM network error provider=%s trace_id=%s err=%s",
-                self.provider,
-                trace_id,
-                str(exc),
-            )
+        except HttpStatusError as exc:
+            raise LlmHttpError(status_code=exc.status_code, body=exc.body) from exc
+        except HttpNetworkError as exc:
             raise LlmNetworkError(str(exc)) from exc
-
-        logger.info(
-            "LLM response provider=%s trace_id=%s body=%s",
-            self.provider,
-            trace_id,
-            _truncate(raw),
-        )
-
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise LlmClientError(f"Invalid JSON response from {self.provider}: {str(exc)}") from exc
+        except HttpClientError as exc:
+            raise LlmClientError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,5 @@
 import base64
 import binascii
-import logging
 import mimetypes
 import time
 from pathlib import Path
@@ -9,6 +8,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.logger import logger
 from app.schemas.common import ImageBox
 from app.schemas.ocr import (
     DiagramCropGenerateRequest,
@@ -19,11 +19,14 @@ from app.schemas.ocr import (
     OcrExtractResponseV2,
     OcrItemWithUrls,
     OcrPipelineMetrics,
+    QuestionAnalyzeRequest,
+    QuestionAnalyzeResponse,
 )
 from app.services import annotation_clean_service
 from app.services import confidence_service
 from app.services import diagram_llm_service
 from app.services import ocr_service
+from app.services import question_analysis_service
 from app.services import question_rebuild_service
 from app.services.image_service import (
     crop_diagram_image_with_metadata,
@@ -41,7 +44,6 @@ from app.db.models.question import Question
 from app.db.models.question_image import QuestionImage
 
 router = APIRouter()
-logger = logging.getLogger("uvicorn.error")
 
 
 def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
@@ -751,3 +753,28 @@ async def generate_diagram_svg(payload: DiagramSvgGenerateRequest):
         suffix=".svg",
     )
     return DiagramSvgGenerateResponse(diagram_svg_url=diagram_svg_url)
+
+
+@router.post("/api/ocr/analyze-question", response_model=QuestionAnalyzeResponse)
+async def analyze_question(payload: QuestionAnalyzeRequest):
+    """
+    分析题目内容，智能推断学科、错题分类、错误原因和标题。
+
+    独立的 LLM 调用，结合学生年级进行推断。
+    """
+    if not payload.question_text or not payload.question_text.strip():
+        return QuestionAnalyzeResponse()
+
+    result = question_analysis_service.analyze_question(
+        payload.question_text,
+        grade=payload.grade,
+    )
+    if not result:
+        return QuestionAnalyzeResponse()
+
+    return QuestionAnalyzeResponse(
+        subject=result.get("subject"),
+        category=result.get("category"),
+        error_reason=result.get("error_reason"),
+        title=result.get("title"),
+    )

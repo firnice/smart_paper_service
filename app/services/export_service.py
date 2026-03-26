@@ -1,6 +1,5 @@
 from io import BytesIO
 from uuid import uuid4
-import logging
 from typing import Optional
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -24,9 +23,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib import colors
 
+from app.core.logger import logger
 from app.schemas.export import ExportQuestionItem, ExportResponse
-
-logger = logging.getLogger("uvicorn.error")
 
 
 def _resolve_local_image_bytes(image_url: Optional[str]) -> Optional[bytes]:

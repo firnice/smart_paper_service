@@ -1,12 +1,10 @@
-import logging
-
 from fastapi import APIRouter, HTTPException
 
+from app.core.logger import logger
 from app.schemas.variants import VariantsRequest, VariantsResponse
 from app.services import variant_service
 
 router = APIRouter()
-logger = logging.getLogger("uvicorn.error")
 
 
 @router.post("/api/variants/generate", response_model=VariantsResponse)

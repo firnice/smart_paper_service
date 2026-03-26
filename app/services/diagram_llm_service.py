@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from app.core.logger import logger
 from app.schemas.common import ImageBox
 from app.services.image_service import crop_image, get_image_size, has_meaningful_content, normalize_image_box_for_source
 from app.services.llm_client_service import LlmClientError, get_whatai_client
-
-
-logger = logging.getLogger("uvicorn.error")
 
 _CROP_SYSTEM_PROMPT = (
     "You are a worksheet diagram detector. "

@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import re
 from typing import Any, Optional
 
+from app.core.logger import logger
 from app.services.llm_client_service import (
     LlmClientError,
     get_siliconflow_client,
 )
-
-logger = logging.getLogger("uvicorn.error")
 
 _OPTION_RE = re.compile(r"^\s*([A-D])[\.、\)]\s*(.+?)\s*$")
 _NUMBER_PREFIX_RE = re.compile(r"^\s*\d+[\.\、\)]\s*")

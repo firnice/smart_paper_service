@@ -1,12 +1,9 @@
 import base64
-import json
-import logging
 from typing import Any, Optional
-from urllib import error, request
 
 from app.core.config import settings
-
-logger = logging.getLogger("uvicorn.error")
+from app.core.logger import logger
+from app.services.http_client import HttpClientError, post_json
 
 
 def is_annotation_clean_fallback_enabled() -> bool:
@@ -39,30 +36,25 @@ def clean_diagram_with_saas(
         "content_type": content_type,
         "file_name": file_name,
     }
-    req = request.Request(
-        settings.annotation_clean_api_url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            **(
-                {"Authorization": f"Bearer {settings.annotation_clean_api_key}"}
-                if settings.annotation_clean_api_key
-                else {}
-            ),
-        },
-        method="POST",
-    )
+
+    extra_headers = {}
+    if settings.annotation_clean_api_key:
+        extra_headers["Authorization"] = f"Bearer {settings.annotation_clean_api_key}"
 
     timeout_seconds = max(3, int(settings.annotation_clean_timeout_seconds))
     try:
-        with request.urlopen(req, timeout=timeout_seconds) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-        payload = json.loads(raw)
+        payload = post_json(
+            settings.annotation_clean_api_url,
+            body,
+            trace_id=f"annotation_clean:{file_name}",
+            headers=extra_headers or None,
+            timeout_seconds=timeout_seconds,
+        )
         encoded = _extract_clean_image_base64(payload)
         if not encoded:
             logger.warning("Annotation clean SaaS response missing clean image field")
             return None
         return base64.b64decode(encoded)
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+    except HttpClientError as exc:
         logger.warning("Annotation clean SaaS request failed: %s", str(exc))
         return None
