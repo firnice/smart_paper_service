@@ -6,8 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from sqlalchemy.orm import Session
+
 from app.core.logger import logger
 from app.schemas.common import ImageBox
+from app.services.agent_config_service import get_llm_client_for_agent
 from app.services.image_service import crop_image, get_image_size, has_meaningful_content, normalize_image_box_for_source
 from app.services.llm_client_service import LlmClientError, get_whatai_client
 
@@ -146,15 +149,24 @@ def generate_diagram_crop(
     question_text: str = "",
     content_type: str = "image/png",
     trace_id: str = "",
+    db: Optional[Session] = None,
 ) -> Optional[DiagramCropResult]:
-    client = get_whatai_client()
-    if not client or not client.diagram_crop_model:
-        return None
+    # 优先使用 agent 配置
+    agent_result = get_llm_client_for_agent(db, "diagram_crop") if db else None
+    if agent_result:
+        llm_client, agent_config = agent_result
+        model = agent_config.model
+    else:
+        client = get_whatai_client()
+        if not client or not client.diagram_crop_model:
+            return None
+        llm_client = client.base_client
+        model = client.diagram_crop_model
 
     encoded = base64.b64encode(question_image_bytes).decode("utf-8")
     data_url = f"data:{content_type};base64,{encoded}"
     payload = {
-        "model": client.diagram_crop_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": _CROP_SYSTEM_PROMPT},
             {
@@ -174,7 +186,7 @@ def generate_diagram_crop(
     }
 
     try:
-        body = client.base_client.chat_completions(
+        body = llm_client.chat_completions(
             payload,
             trace_id=trace_id or "whatai_diagram_crop",
         )
@@ -205,10 +217,10 @@ def generate_diagram_crop(
             width=out_w,
             height=out_h,
             box=normalized_box,
-            model=client.diagram_crop_model,
+            model=model,
         )
     except (LlmClientError, ValueError) as exc:
-        logger.warning("Whatai diagram crop failed: %s", str(exc))
+        logger.warning("Diagram crop failed: %s", str(exc))
         return None
 
 
@@ -217,10 +229,19 @@ def generate_diagram_svg(
     *,
     diagram_image_bytes: Optional[bytes] = None,
     trace_id: str = "",
+    db: Optional[Session] = None,
 ) -> Optional[str]:
-    client = get_whatai_client()
-    if not client or not client.diagram_svg_model:
-        return None
+    # 优先使用 agent 配置
+    agent_result = get_llm_client_for_agent(db, "diagram_svg") if db else None
+    if agent_result:
+        llm_client, agent_config = agent_result
+        model = agent_config.model
+    else:
+        client = get_whatai_client()
+        if not client or not client.diagram_svg_model:
+            return None
+        llm_client = client.base_client
+        model = client.diagram_svg_model
 
     user_content: list[dict[str, Any]] = [
         {
@@ -241,7 +262,7 @@ def generate_diagram_svg(
         )
 
     payload = {
-        "model": client.diagram_svg_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": _SVG_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
@@ -250,9 +271,9 @@ def generate_diagram_svg(
     }
 
     try:
-        body = client.base_client.chat_completions(
+        body = llm_client.chat_completions(
             payload,
-            trace_id=trace_id or "whatai_diagram_svg",
+            trace_id=trace_id or "diagram_svg",
         )
         message_content = (
             body.get("choices", [{}])[0]
@@ -261,5 +282,5 @@ def generate_diagram_svg(
         )
         return _extract_svg(message_content)
     except LlmClientError as exc:
-        logger.warning("Whatai diagram svg generation failed: %s", str(exc))
+        logger.warning("Diagram svg generation failed: %s", str(exc))
         return None

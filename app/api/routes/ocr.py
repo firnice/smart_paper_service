@@ -200,7 +200,8 @@ async def extract_questions(
         ocr_items = ocr_service.extract_questions(
             ocr_image_bytes,
             ocr_content_type,
-            ocr_filename
+            ocr_filename,
+            db=db,
         )
         ocr_ms = int((time.perf_counter() - ocr_start_at) * 1000)
         logger.info("OCR extracted %d questions", len(ocr_items))
@@ -305,6 +306,7 @@ async def extract_questions(
                                 question_source_bytes,
                                 "image/png",
                                 f"{ocr_filename}-q{item.id}-refine.png",
+                                db=db,
                             )
                         except Exception as refine_exc:
                             logger.warning(
@@ -688,7 +690,7 @@ async def extract_questions_simple(file: UploadFile = File(...)):
 
 
 @router.post("/api/ocr/diagram/crop", response_model=DiagramCropGenerateResponse)
-async def generate_diagram_crop(payload: DiagramCropGenerateRequest):
+async def generate_diagram_crop(payload: DiagramCropGenerateRequest, db: Session = Depends(get_db)):
     if not settings.enable_whatai_diagram_crop:
         return DiagramCropGenerateResponse()
 
@@ -698,6 +700,7 @@ async def generate_diagram_crop(payload: DiagramCropGenerateRequest):
         question_text=payload.question_text,
         content_type=content_type,
         trace_id=f"diagram-crop:item:{payload.item_id or 'unknown'}",
+        db=db,
     )
     if not result:
         return DiagramCropGenerateResponse()
@@ -713,7 +716,7 @@ async def generate_diagram_crop(payload: DiagramCropGenerateRequest):
 
 
 @router.post("/api/ocr/diagram/svg", response_model=DiagramSvgGenerateResponse)
-async def generate_diagram_svg(payload: DiagramSvgGenerateRequest):
+async def generate_diagram_svg(payload: DiagramSvgGenerateRequest, db: Session = Depends(get_db)):
     if not settings.enable_whatai_diagram_svg:
         return DiagramSvgGenerateResponse()
 
@@ -741,6 +744,7 @@ async def generate_diagram_svg(payload: DiagramSvgGenerateRequest):
         payload.question_text,
         diagram_image_bytes=diagram_seed_bytes,
         trace_id=f"diagram-svg:item:{payload.item_id or 'unknown'}",
+        db=db,
     )
     if not diagram_svg:
         return DiagramSvgGenerateResponse()
@@ -756,7 +760,7 @@ async def generate_diagram_svg(payload: DiagramSvgGenerateRequest):
 
 
 @router.post("/api/ocr/analyze-question", response_model=QuestionAnalyzeResponse)
-async def analyze_question(payload: QuestionAnalyzeRequest):
+async def analyze_question(payload: QuestionAnalyzeRequest, db: Session = Depends(get_db)):
     """
     分析题目内容，智能推断学科、错题分类、错误原因和标题。
 
@@ -768,6 +772,7 @@ async def analyze_question(payload: QuestionAnalyzeRequest):
     result = question_analysis_service.analyze_question(
         payload.question_text,
         grade=payload.grade,
+        db=db,
     )
     if not result:
         return QuestionAnalyzeResponse()

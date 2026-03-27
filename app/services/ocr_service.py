@@ -7,10 +7,12 @@ import time
 from typing import Optional
 
 from PIL import Image, ImageOps
+from sqlalchemy.orm import Session
 
 from app.core.logger import logger
 from app.schemas.common import ImageBox
 from app.schemas.ocr import OcrItem
+from app.services.agent_config_service import get_llm_client_for_agent
 from app.services.llm_client_service import (
     LlmClientError,
     LlmHttpError,
@@ -275,11 +277,23 @@ def _call_vision_completion(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.2,
+    db: Optional[Session] = None,
 ) -> str:
-    client = get_siliconflow_client()
-    if not client or not client.ocr_model:
-        logger.error("OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
-        raise RuntimeError("SILICONFLOW OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
+    # 优先使用 agent 配置
+    agent_result = get_llm_client_for_agent(db, "ocr_recognize") if db else None
+    if agent_result:
+        llm_client, agent_config = agent_result
+        ocr_model = agent_config.model
+        timeout_seconds = agent_config.timeout_seconds
+    else:
+        # 回退到旧方式
+        client = get_siliconflow_client()
+        if not client or not client.ocr_model:
+            logger.error("OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
+            raise RuntimeError("SILICONFLOW OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
+        llm_client = client.base_client
+        ocr_model = client.ocr_model
+        timeout_seconds = client.base_client.timeout_seconds
 
     retry_candidates: list[tuple[str, bytes, str, str]] = [
         ("orig-high", image_bytes, content_type, "high"),
@@ -300,7 +314,7 @@ def _call_vision_completion(
         encoded = base64.b64encode(candidate_bytes).decode("utf-8")
         data_url = f"data:{candidate_content_type};base64,{encoded}"
         payload = {
-            "model": client.ocr_model,
+            "model": ocr_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -319,16 +333,16 @@ def _call_vision_completion(
             index,
             total_attempts,
             tag,
-            client.ocr_model,
+            ocr_model,
             len(candidate_bytes),
             detail,
             file_name,
-            client.base_client.timeout_seconds,
+            timeout_seconds,
         )
         start_time = time.monotonic()
 
         try:
-            body = client.base_client.chat_completions(
+            body = llm_client.chat_completions(
                 payload,
                 trace_id=f"ocr:{file_name}:{tag}:{index}",
             )
@@ -394,7 +408,12 @@ def _call_vision_completion(
     raise RuntimeError(last_error_message)
 
 
-def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> list[OcrItem]:
+def extract_questions(
+    image_bytes: bytes,
+    content_type: str,
+    file_name: str,
+    db: Optional[Session] = None,
+) -> list[OcrItem]:
     """Call SiliconFlow vision model to extract questions."""
     content = _call_vision_completion(
         image_bytes=image_bytes,
@@ -403,6 +422,7 @@ def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> 
         system_prompt=SYSTEM_PROMPT,
         user_prompt=USER_PROMPT,
         temperature=0.2,
+        db=db,
     )
     items = _parse_items(content)
     logger.info("OCR parsed items=%d", len(items))
@@ -418,7 +438,12 @@ def extract_questions(image_bytes: bytes, content_type: str, file_name: str) -> 
     return items
 
 
-def refine_diagram_box(image_bytes: bytes, content_type: str, file_name: str) -> Optional[ImageBox]:
+def refine_diagram_box(
+    image_bytes: bytes,
+    content_type: str,
+    file_name: str,
+    db: Optional[Session] = None,
+) -> Optional[ImageBox]:
     """
     Second-pass refinement for printed diagram region.
     Input should be one question snapshot.
@@ -430,6 +455,7 @@ def refine_diagram_box(image_bytes: bytes, content_type: str, file_name: str) ->
         system_prompt=REFINE_SYSTEM_PROMPT,
         user_prompt=REFINE_USER_PROMPT,
         temperature=0.0,
+        db=db,
     )
     box = _parse_refine_box(content)
     if box:

@@ -4,7 +4,10 @@ import json
 import re
 from typing import Any, Optional
 
+from sqlalchemy.orm import Session
+
 from app.core.logger import logger
+from app.services.agent_config_service import get_llm_client_for_agent
 from app.services.llm_client_service import (
     LlmClientError,
     get_siliconflow_client,
@@ -70,33 +73,49 @@ def analyze_question(
     question_text: str,
     *,
     grade: str = "",
+    db: Optional[Session] = None,
 ) -> Optional[dict[str, Any]]:
     """Analyze a question and suggest subject, category, error_reason, title."""
-    client = get_siliconflow_client()
-    if not client or not client.default_model:
-        logger.warning("No siliconflow client available for question analysis")
-        return None
-
     if not question_text or not question_text.strip():
         return None
 
+    # 优先使用 agent 配置
+    agent_result = get_llm_client_for_agent(db, "question_analyze") if db else None
+    if agent_result:
+        llm_client, agent_config = agent_result
+        model = agent_config.model
+        system_prompt = agent_config.system_prompt or _SYSTEM_PROMPT
+        user_template = agent_config.user_prompt_template or _USER_PROMPT_TEMPLATE
+        temperature = agent_config.temperature
+    else:
+        # 回退到旧方式
+        client = get_siliconflow_client()
+        if not client or not client.default_model:
+            logger.warning("No siliconflow client available for question analysis")
+            return None
+        llm_client = client.base_client
+        model = client.default_model
+        system_prompt = _SYSTEM_PROMPT
+        user_template = _USER_PROMPT_TEMPLATE
+        temperature = 0.1
+
     grade_display = grade or "未知"
-    user_prompt = _USER_PROMPT_TEMPLATE.format(
+    user_prompt = user_template.format(
         grade=grade_display,
         question_text=question_text.strip(),
     )
 
     payload = {
-        "model": client.default_model,
+        "model": model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.1,
+        "temperature": temperature,
     }
 
     try:
-        data = client.base_client.chat_completions(
+        data = llm_client.chat_completions(
             payload,
             trace_id="analyze_question",
         )

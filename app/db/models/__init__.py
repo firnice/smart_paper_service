@@ -12,6 +12,8 @@ from app.db.models.error_reason import ErrorReason
 from app.db.models.wrong_question import WrongQuestion
 from app.db.models.wrong_question_error_reason import WrongQuestionErrorReason
 from app.db.models.study_record import StudyRecord
+from app.db.models.agent_config import AgentConfig
+from app.db.models.trend_analysis import TrendAnalysis
 
 __all__ = [
     "Paper",
@@ -28,4 +30,6 @@ __all__ = [
     "WrongQuestion",
     "WrongQuestionErrorReason",
     "StudyRecord",
+    "AgentConfig",
+    "TrendAnalysis",
 ]
