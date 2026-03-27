@@ -1,8 +1,9 @@
+import re
 from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
+from sqlalchemy import extract, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -261,6 +262,23 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
     return _serialize_wrong_question(created)
 
 
+def _parse_term_filter(term: str):
+    """Parse term like '三年级上' or '三年级下' into (grade, semester).
+
+    Returns (grade, semester) where semester is '上' or '下', or (None, None) if invalid.
+    上学期 = months 9-12, 1  (Sep~Jan)
+    下学期 = months 2-8       (Feb~Aug)
+    """
+    match = re.match(r"^(.+?)(上|下)$", term)
+    if not match:
+        return None, None
+    return match.group(1), match.group(2)
+
+
+VALID_SORT_FIELDS = {"updated_at", "created_at", "first_error_date", "error_count"}
+VALID_SORT_ORDERS = {"asc", "desc"}
+
+
 @router.get("/api/wrong-questions", response_model=WrongQuestionListResponse)
 def list_wrong_questions(
     student_id: Optional[int] = None,
@@ -271,6 +289,9 @@ def list_wrong_questions(
     error_reason_id: Optional[int] = None,
     is_bookmarked: Optional[bool] = None,
     keyword: Optional[str] = None,
+    term: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -311,8 +332,26 @@ def list_wrong_questions(
             )
         )
 
+    if term is not None:
+        parsed_grade, semester = _parse_term_filter(term)
+        if parsed_grade and semester:
+            query = query.filter(WrongQuestion.grade == parsed_grade)
+            if semester == "上":
+                query = query.filter(
+                    extract("month", WrongQuestion.first_error_date).in_([9, 10, 11, 12, 1])
+                )
+            else:
+                query = query.filter(
+                    extract("month", WrongQuestion.first_error_date).in_([2, 3, 4, 5, 6, 7, 8])
+                )
+
+    resolved_sort_by = sort_by if sort_by in VALID_SORT_FIELDS else "updated_at"
+    resolved_sort_order = sort_order if sort_order in VALID_SORT_ORDERS else "desc"
+    sort_column = getattr(WrongQuestion, resolved_sort_by)
+    order_expr = sort_column.asc() if resolved_sort_order == "asc" else sort_column.desc()
+
     total = query.count()
-    items = query.order_by(WrongQuestion.updated_at.desc()).offset(offset).limit(limit).all()
+    items = query.order_by(order_expr).offset(offset).limit(limit).all()
     return WrongQuestionListResponse(
         total=total,
         items=[_serialize_wrong_question(item) for item in items],
