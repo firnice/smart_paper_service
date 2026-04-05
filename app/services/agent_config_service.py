@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -74,6 +75,7 @@ class ResolvedAgentConfig:
     description: str
     provider: str
     model: str
+    fallback_models: list[str]
     base_url: str
     api_key: str
     temperature: float
@@ -83,6 +85,46 @@ class ResolvedAgentConfig:
     user_prompt_template: Optional[str]
     is_enabled: bool
     source: str  # "database" | "default"
+
+
+def normalize_model_list(models: Optional[list[str] | tuple[str, ...] | str]) -> list[str]:
+    if models is None:
+        return []
+    if isinstance(models, str):
+        candidates = [models]
+    else:
+        candidates = list(models)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def parse_fallback_models(raw_value: Optional[str]) -> list[str]:
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return normalize_model_list([part.strip() for part in raw_value.split(",")])
+    if isinstance(parsed, list):
+        return normalize_model_list(parsed)
+    if isinstance(parsed, str):
+        return normalize_model_list([parsed])
+    return []
+
+
+def serialize_fallback_models(models: Optional[list[str] | tuple[str, ...] | str]) -> Optional[str]:
+    normalized = normalize_model_list(models)
+    if not normalized:
+        return None
+    return json.dumps(normalized, ensure_ascii=True)
 
 
 def _resolve_provider_credentials(provider: str, base_url: Optional[str], api_key_ref: Optional[str]):
@@ -157,6 +199,7 @@ def get_agent_config(db: Optional[Session], node_name: str) -> Optional[Resolved
             description=db_config.description or "",
             provider=db_config.provider,
             model=db_config.model,
+            fallback_models=parse_fallback_models(db_config.fallback_models),
             base_url=resolved_url,
             api_key=resolved_key,
             temperature=db_config.temperature if db_config.temperature is not None else 0.2,
@@ -192,6 +235,7 @@ def get_agent_config(db: Optional[Session], node_name: str) -> Optional[Resolved
         description=defaults.get("description", ""),
         provider=provider,
         model=model,
+        fallback_models=[],
         base_url=resolved_url,
         api_key=resolved_key,
         temperature=defaults.get("temperature", 0.2),
@@ -243,6 +287,7 @@ def list_all_agent_configs(db: Optional[Session]) -> list[ResolvedAgentConfig]:
                 description=defaults.get("description", ""),
                 provider=defaults["provider"],
                 model="(未配置)",
+                fallback_models=[],
                 base_url="",
                 api_key="",
                 temperature=defaults.get("temperature", 0.2),

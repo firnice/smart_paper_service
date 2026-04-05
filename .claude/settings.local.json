@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(python3.9 --version)",
+      "Bash(python3.10 --version)",
+      "Bash(python3.11 --version)",
+      "Bash(python3.11:*)",
+      "Bash(bash:*)",
+      "Bash(open:*)"
+    ]
+  }
+}

@@ -177,6 +177,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         notes=item.notes,
         image_url=item.image_url,
         image_name=item.image_name,
+        original_image_url=item.original_image_url,
+        original_image_name=item.original_image_name,
         first_error_date=item.first_error_date,
         last_review_date=item.last_review_date,
         last_practice_result=item.last_practice_result,
@@ -237,6 +239,8 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         notes=payload.notes,
         image_url=payload.image_url,
         image_name=payload.image_name,
+        original_image_url=payload.original_image_url,
+        original_image_name=payload.original_image_name,
         first_error_date=payload.first_error_date or date.today(),
     )
     db.add(wrong_question)

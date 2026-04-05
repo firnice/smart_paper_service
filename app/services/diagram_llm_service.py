@@ -15,29 +15,30 @@ from app.services.image_service import crop_image, get_image_size, has_meaningfu
 from app.services.llm_client_service import LlmClientError, get_whatai_client
 
 _CROP_SYSTEM_PROMPT = (
-    "You are a worksheet diagram detector. "
-    "Return strict JSON only."
+    "你是一个试题图示检测助手。"
+    "只返回严格 JSON，不要输出任何额外说明。"
 )
 
 _CROP_USER_PROMPT_TEMPLATE = (
-    "Locate the core printed diagram area in this question snapshot. "
-    "Exclude handwriting marks, score marks, and large blank margins. "
-    "Return ONLY JSON: {{\"diagram_box\": {{\"ymin\": int, \"xmin\": int, \"ymax\": int, \"xmax\": int}}}}. "
-    "Coordinates must be in CURRENT image pixels. "
-    "If diagram not found, return {{\"diagram_box\": null}}. "
-    "Question text (for context): {question_text}"
+    "请在这张题目截图中定位核心印刷图示区域。"
+    "排除手写痕迹、分数标记、批改标记和大块空白边缘。"
+    "只返回 JSON：{{\"diagram_box\": {{\"ymin\": int, \"xmin\": int, \"ymax\": int, \"xmax\": int}}}}。"
+    "坐标必须使用当前图片像素。"
+    "如果没有找到图示，请返回 {{\"diagram_box\": null}}。"
+    "题目文字（仅供上下文参考）：{question_text}"
 )
 
 _SVG_SYSTEM_PROMPT = (
-    "You are an SVG diagram generator for elementary worksheet cards. "
-    "Output clean, valid SVG only."
+    "你是一个小学题目卡片 SVG 图示生成助手。"
+    "只输出干净、合法的 SVG，不要输出任何解释。"
 )
 
 _SVG_USER_PROMPT_TEMPLATE = (
-    "Generate a simple black-and-white educational diagram as SVG for this question. "
-    "Requirements: width around 900, height around 520, white background, black strokes, no script/style tags. "
-    "Keep it minimal and readable for students. Return ONLY raw <svg>...</svg>. "
-    "Question text: {question_text}"
+    "请为这道题生成一个简洁的黑白教学图示 SVG。"
+    "要求：宽度约 900，高度约 520，白底黑线，不要包含 script/style 标签。"
+    "图示要尽量简洁，便于学生阅读。"
+    "只返回原始 <svg>...</svg> 内容。"
+    "题目文字：{question_text}"
 )
 
 

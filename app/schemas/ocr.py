@@ -8,6 +8,10 @@ from app.schemas.common import ImageBox
 class OcrItem(BaseModel):
     id: int
     text: str
+    subject_tag: Optional[str] = None
+    is_wrong: bool = False
+    wrong_reason: Optional[str] = None
+    correction_suggestion: Optional[str] = None
     has_image: bool = False
     question_box: Optional[ImageBox] = None
     image_box: Optional[ImageBox] = None
@@ -17,6 +21,10 @@ class OcrItemWithUrls(BaseModel):
     """OCR结果项（包含裁剪后的图片URL）"""
     id: int
     text: str
+    subject_tag: Optional[str] = None
+    is_wrong: bool = False
+    wrong_reason: Optional[str] = None
+    correction_suggestion: Optional[str] = None
     has_image: bool = False
     question_box: Optional[ImageBox] = None
     image_box: Optional[ImageBox] = None
@@ -38,6 +46,8 @@ class OcrItemWithUrls(BaseModel):
 
 class OcrExtractResponse(BaseModel):
     items: List[OcrItem]
+    used_prompt: Optional[str] = None
+    prompt: Optional[str] = None
 
 
 class OcrPipelineMetrics(BaseModel):
@@ -59,6 +69,8 @@ class OcrExtractResponseV2(BaseModel):
     """OCR提取响应（V2版本，包含图片URL和数据库ID）"""
     items: List[OcrItemWithUrls]
     paper_id: int  # 试卷ID
+    used_prompt: Optional[str] = None
+    prompt: Optional[str] = None
     pipeline_metrics: Optional[OcrPipelineMetrics] = None
 
 

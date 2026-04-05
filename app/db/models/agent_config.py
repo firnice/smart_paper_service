@@ -15,6 +15,7 @@ class AgentConfig(Base):
 
     provider = Column(String(32), nullable=False)  # siliconflow, whatai
     model = Column(String(128), nullable=False)
+    fallback_models = Column(Text, nullable=True)
     base_url = Column(String(512), nullable=True)  # null = 使用 provider 默认
     api_key_ref = Column(String(64), nullable=True)  # null = 使用 provider 默认
 

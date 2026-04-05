@@ -9,49 +9,30 @@ from typing import Optional
 from PIL import Image, ImageOps
 from sqlalchemy.orm import Session
 
+from app.core.ocr_extract_llm_config import load_ocr_extract_llm_config
 from app.core.logger import logger
 from app.schemas.common import ImageBox
 from app.schemas.ocr import OcrItem
-from app.services.agent_config_service import get_llm_client_for_agent
 from app.services.llm_client_service import (
+    BaseLlmClient,
     LlmClientError,
     LlmHttpError,
     LlmNetworkError,
     get_siliconflow_client,
 )
 
-SYSTEM_PROMPT = (
-    "You are a primary school worksheet digitizer. "
-    "Extract printed questions only and ignore handwritten answers, markings, and corrections. "
-    "Preserve the original reading order (top-to-bottom, left-to-right) and keep line breaks "
-    "and numbering as seen on the page."
-)
-
-USER_PROMPT = (
-    "Extract all questions from the image. Return ONLY a JSON array in reading order. "
-    "Each item must have: "
-    "id (int, use the printed question number if present), "
-    "text (string, include the question number and preserve line breaks), "
-    "has_image (bool), "
-    "question_box (object {ymin,xmin,ymax,xmax} in ORIGINAL IMAGE PIXELS; include question stem/options/diagram), "
-    "image_box (object with keys ymin,xmin,ymax,xmax in ORIGINAL IMAGE PIXELS, or null). "
-    "Do NOT return [x1,y1,x2,y2] array order. "
-    "If a question includes a necessary illustration/diagram, set has_image=true and return a "
-    "best-effort image_box around the diagram."
-)
-
 REFINE_SYSTEM_PROMPT = (
-    "You are a worksheet diagram locator. "
-    "Find only the printed figure region used to solve the question. "
-    "Strictly exclude handwritten answers, pencil circles, red correction marks, and blank margins."
+    "你是一个试卷图示定位助手。"
+    "只找出题目中用于解题的印刷图示区域。"
+    "必须严格排除手写答案、铅笔圈画、红笔批改痕迹和大块空白边缘。"
 )
 
 REFINE_USER_PROMPT = (
-    "Locate the clean printed diagram area in this question snapshot. "
-    "Return ONLY one JSON object with key diagram_box. "
-    "Format: {\"diagram_box\": {\"ymin\": int, \"xmin\": int, \"ymax\": int, \"xmax\": int}}. "
-    "If no printed diagram exists, return {\"diagram_box\": null}. "
-    "Coordinates must be in CURRENT IMAGE pixels."
+    "请在这张题目截图中定位干净的印刷图示区域。"
+    "只返回一个 JSON 对象，键名必须是 diagram_box。"
+    "格式为：{\"diagram_box\": {\"ymin\": int, \"xmin\": int, \"ymax\": int, \"xmax\": int}}。"
+    "如果不存在印刷图示，请返回 {\"diagram_box\": null}。"
+    "坐标必须使用当前这张截图的像素坐标。"
 )
 
 RETRYABLE_UPSTREAM_CODE_MARKERS = ("50507", "unknown error")
@@ -143,6 +124,30 @@ def _to_image_box(value: object) -> Optional[ImageBox]:
     return None
 
 
+def _to_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "是", "对"}:
+        return True
+    if text in {"false", "0", "no", "n", "否", "错", "null", "none", ""}:
+        return False
+    return default
+
+
+def _normalize_optional_text(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none"}:
+        return None
+    return text
+
+
 def _strip_code_fence(text: str) -> str:
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -214,6 +219,12 @@ def _parse_items(text: str) -> list[OcrItem]:
         )
         if number:
             text_value = _ensure_numbered(text_value, number)
+        is_wrong = _to_bool(raw.get("is_wrong"), default=False)
+        wrong_reason = _normalize_optional_text(raw.get("wrong_reason"))
+        correction_suggestion = _normalize_optional_text(raw.get("correction_suggestion"))
+        if not is_wrong:
+            wrong_reason = None
+            correction_suggestion = None
         has_image = bool(raw.get("has_image", False))
         question_box = _to_image_box(
             raw.get("question_box")
@@ -229,10 +240,15 @@ def _parse_items(text: str) -> list[OcrItem]:
         )
         if image_box:
             has_image = True
+        item_id = number or index
         items.append(
             OcrItem(
-                id=number or int(raw.get("id", index)),
+                id=item_id,
                 text=text_value,
+                subject_tag=_normalize_optional_text(raw.get("subject_tag")),
+                is_wrong=is_wrong,
+                wrong_reason=wrong_reason,
+                correction_suggestion=correction_suggestion,
                 has_image=has_image,
                 question_box=question_box,
                 image_box=image_box,
@@ -270,6 +286,15 @@ def _parse_refine_box(text: str) -> Optional[ImageBox]:
     )
 
 
+def resolve_extract_prompt(custom_prompt: Optional[str]) -> tuple[str, Optional[str]]:
+    config = load_ocr_extract_llm_config()
+    normalized_prompt = (custom_prompt or "").strip() or None
+    if not normalized_prompt:
+        return config.user_prompt, None
+    effective_prompt = f"{config.user_prompt}\n\n{config.custom_prompt_prefix}\n{normalized_prompt}"
+    return effective_prompt, normalized_prompt
+
+
 def _call_vision_completion(
     image_bytes: bytes,
     content_type: str,
@@ -279,21 +304,23 @@ def _call_vision_completion(
     temperature: float = 0.2,
     db: Optional[Session] = None,
 ) -> str:
-    # 优先使用 agent 配置
-    agent_result = get_llm_client_for_agent(db, "ocr_recognize") if db else None
-    if agent_result:
-        llm_client, agent_config = agent_result
-        ocr_model = agent_config.model
-        timeout_seconds = agent_config.timeout_seconds
-    else:
-        # 回退到旧方式
-        client = get_siliconflow_client()
-        if not client or not client.ocr_model:
-            logger.error("OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
-            raise RuntimeError("SILICONFLOW OCR config missing. Please set SILICONFLOW_OCR_MODEL.")
-        llm_client = client.base_client
-        ocr_model = client.ocr_model
-        timeout_seconds = client.base_client.timeout_seconds
+    config = load_ocr_extract_llm_config()
+    client = get_siliconflow_client()
+    if not client:
+        logger.error("OCR LLM config missing. Please set SILICONFLOW_API_KEY and SILICONFLOW_BASE_URL.")
+        raise RuntimeError("SILICONFLOW LLM config missing.")
+    if config.provider != "siliconflow":
+        raise RuntimeError(f"Unsupported OCR LLM provider: {config.provider}")
+    if not config.model:
+        raise RuntimeError("OCR extract YAML missing model.")
+    llm_client = BaseLlmClient(
+        provider="siliconflow",
+        base_url=client.base_client.base_url,
+        api_key=client.base_client.api_key,
+        timeout_seconds=config.timeout_seconds or client.base_client.timeout_seconds,
+    )
+    model_name = config.model
+    timeout_seconds = llm_client.timeout_seconds
 
     retry_candidates: list[tuple[str, bytes, str, str]] = [
         ("orig-high", image_bytes, content_type, "high"),
@@ -314,7 +341,7 @@ def _call_vision_completion(
         encoded = base64.b64encode(candidate_bytes).decode("utf-8")
         data_url = f"data:{candidate_content_type};base64,{encoded}"
         payload = {
-            "model": ocr_model,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -329,11 +356,11 @@ def _call_vision_completion(
         }
 
         logger.info(
-            "OCR request start attempt=%d/%d tag=%s model=%s bytes=%d detail=%s filename=%s timeout=%ss",
+            "OCR-LLM request start attempt=%d/%d tag=%s model=%s bytes=%d detail=%s filename=%s timeout=%ss",
             index,
             total_attempts,
             tag,
-            ocr_model,
+            model_name,
             len(candidate_bytes),
             detail,
             file_name,
@@ -344,7 +371,7 @@ def _call_vision_completion(
         try:
             body = llm_client.chat_completions(
                 payload,
-                trace_id=f"ocr:{file_name}:{tag}:{index}",
+                trace_id=f"ocr_llm:{file_name}:{tag}:{index}",
             )
             content = (
                 body.get("choices", [{}])[0]
@@ -353,7 +380,7 @@ def _call_vision_completion(
             )
             elapsed = time.monotonic() - start_time
             logger.info(
-                "OCR response received attempt=%d/%d tag=%s length=%d elapsed=%.2fs",
+                "OCR-LLM response received attempt=%d/%d tag=%s length=%d elapsed=%.2fs",
                 index,
                 total_attempts,
                 tag,
@@ -365,45 +392,44 @@ def _call_vision_completion(
             body_text = exc.body
             elapsed = time.monotonic() - start_time
             retryable = _is_retryable_ocr_http_error(exc.status_code, body_text)
-            has_next = index < total_attempts
+            has_next_retry = index < len(retry_candidates)
             logger.error(
-                "OCR HTTP error attempt=%d/%d tag=%s status=%s retryable=%s elapsed=%.2fs body=%s",
+                "OCR-LLM HTTP error attempt=%d/%d tag=%s status=%s retryable=%s elapsed=%.2fs body=%s",
                 index,
                 total_attempts,
                 tag,
                 exc.status_code,
-                retryable and has_next,
+                retryable and has_next_retry,
                 elapsed,
                 body_text,
             )
-            if retryable and has_next:
+            if retryable and has_next_retry:
                 continue
             if retryable:
-                last_error_message = "OCR 上游服务暂时异常，请稍后重试。"
+                last_error_message = "识别大模型暂时异常，请稍后重试。"
             else:
-                last_error_message = f"OCR request failed ({exc.status_code})."
+                last_error_message = f"OCR-LLM request failed ({exc.status_code})."
             raise RuntimeError(last_error_message) from exc
         except (LlmNetworkError, http.client.RemoteDisconnected, ConnectionError) as exc:
             elapsed = time.monotonic() - start_time
-            has_next = index < total_attempts
+            has_next_retry = index < len(retry_candidates)
             logger.warning(
-                "OCR request timeout/network error attempt=%d/%d tag=%s retryable=%s elapsed=%.2fs err=%s",
+                "OCR-LLM timeout/network error attempt=%d/%d tag=%s retryable=%s elapsed=%.2fs err=%s",
                 index,
                 total_attempts,
                 tag,
-                has_next,
+                has_next_retry,
                 elapsed,
                 str(exc),
             )
-            if has_next:
+            if has_next_retry:
                 continue
             last_error_message = (
-                "OCR request failed or timed out. Try again, use a smaller image, "
-                "or increase SILICONFLOW_TIMEOUT_SECONDS."
+                "识别大模型请求失败或超时，请重试，或更换更小的图片。"
             )
             raise RuntimeError(last_error_message) from exc
         except LlmClientError as exc:
-            raise RuntimeError(f"OCR request failed: {str(exc)}") from exc
+            raise RuntimeError(f"OCR-LLM request failed: {str(exc)}") from exc
 
     raise RuntimeError(last_error_message)
 
@@ -412,30 +438,46 @@ def extract_questions(
     image_bytes: bytes,
     content_type: str,
     file_name: str,
+    prompt: Optional[str] = None,
     db: Optional[Session] = None,
-) -> list[OcrItem]:
-    """Call SiliconFlow vision model to extract questions."""
+) -> tuple[list[OcrItem], str]:
+    """Call a multimodal LLM to extract and analyze questions from the paper image."""
+    config = load_ocr_extract_llm_config()
+    effective_prompt, custom_prompt = resolve_extract_prompt(prompt)
+    logger.info(
+        "OCR prompt resolved file=%s custom_prompt=%r effective_prompt=%r",
+        file_name,
+        custom_prompt,
+        effective_prompt,
+    )
     content = _call_vision_completion(
         image_bytes=image_bytes,
         content_type=content_type,
         file_name=file_name,
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=USER_PROMPT,
-        temperature=0.2,
+        system_prompt=config.system_prompt,
+        user_prompt=effective_prompt,
+        temperature=config.temperature,
         db=db,
     )
     items = _parse_items(content)
-    logger.info("OCR parsed items=%d", len(items))
+    logger.info("OCR-LLM parsed items=%d", len(items))
     if not items and content.strip():
-        return [
-            OcrItem(
-                id=1,
-                text=content.strip(),
-                has_image=False,
-                image_box=None,
-            )
-        ]
-    return items
+        return (
+            [
+                OcrItem(
+                    id=1,
+                    text=content.strip(),
+                    subject_tag=None,
+                    is_wrong=False,
+                    wrong_reason=None,
+                    correction_suggestion=None,
+                    has_image=False,
+                    image_box=None,
+                )
+            ],
+            effective_prompt,
+        )
+    return items, effective_prompt
 
 
 def refine_diagram_box(

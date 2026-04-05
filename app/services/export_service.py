@@ -22,8 +22,15 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
 from app.core.logger import logger
+
+# Register built-in CID fonts for Chinese character support
+pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+_FONT_NORMAL = "STSong-Light"
+_FONT_BOLD = "STSong-Light"
 from app.schemas.export import ExportQuestionItem, ExportResponse
 
 
@@ -100,7 +107,7 @@ def _base_doc_and_styles():
         alignment=TA_CENTER,
         spaceAfter=30,
         spaceBefore=10,
-        fontName="Helvetica-Bold",
+        fontName=_FONT_BOLD,
         textColor=colors.HexColor("#1a1a1a"),
     )
     section_title_style = ParagraphStyle(
@@ -110,7 +117,7 @@ def _base_doc_and_styles():
         alignment=TA_LEFT,
         spaceAfter=15,
         spaceBefore=20,
-        fontName="Helvetica-Bold",
+        fontName=_FONT_BOLD,
         textColor=colors.HexColor("#333333"),
         borderPadding=(5, 10, 5, 10),
         backColor=colors.HexColor("#f0f0f0"),
@@ -119,7 +126,7 @@ def _base_doc_and_styles():
         "QuestionNumber",
         parent=styles["BodyText"],
         fontSize=14,
-        fontName="Helvetica-Bold",
+        fontName=_FONT_BOLD,
         textColor=colors.HexColor("#0066cc"),
         spaceAfter=8,
     )
@@ -127,6 +134,7 @@ def _base_doc_and_styles():
         "QuestionContent",
         parent=styles["BodyText"],
         fontSize=12,
+        fontName=_FONT_NORMAL,
         alignment=TA_JUSTIFY,
         leading=20,
         leftIndent=20,
@@ -136,6 +144,7 @@ def _base_doc_and_styles():
         "AnswerSpace",
         parent=styles["BodyText"],
         fontSize=10,
+        fontName=_FONT_NORMAL,
         textColor=colors.HexColor("#999999"),
         leftIndent=20,
         spaceAfter=15,
@@ -144,6 +153,7 @@ def _base_doc_and_styles():
         "Footer",
         parent=styles["Normal"],
         fontSize=9,
+        fontName=_FONT_NORMAL,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#999999"),
     )
@@ -204,7 +214,7 @@ def _generate_pdf(
     story.append(line_table)
     story.append(Spacer(1, 1 * cm))
 
-    story.append(Paragraph("📝 原题", styles["section"]))
+    story.append(Paragraph("原题", styles["section"]))
     story.append(Spacer(1, 0.5 * cm))
     story.append(_question_table(original_text, doc, styles["content"]))
     story.append(Spacer(1, 0.3 * cm))
@@ -214,10 +224,10 @@ def _generate_pdf(
 
     if variants:
         story.append(PageBreak())
-        story.append(Paragraph("🔄 变式题（举一反三）", styles["section"]))
+        story.append(Paragraph("变式题（举一反三）", styles["section"]))
         story.append(Spacer(1, 0.5 * cm))
         for i, variant in enumerate(variants, 1):
-            question_elements = [Paragraph(f"<b>第 {i} 题</b>", styles["number"])]
+            question_elements = [Paragraph(f"第 {i} 题", styles["number"])]
             question_elements.append(
                 _question_table(variant, doc, styles["content"], background="#f8f9ff", border="#b3c6ff")
             )
@@ -258,7 +268,7 @@ def _generate_practice_sheet_pdf(
         meta_parts = [part for part in [item.subject, item.category] if part]
         if meta_parts:
             title_line += f"（{' / '.join(meta_parts)}）"
-        block.append(Paragraph(f"<b>第 {index} 题 · {title_line}</b>", styles["number"]))
+        block.append(Paragraph(f"第 {index} 题 · {title_line}", styles["number"]))
         question_image = _build_question_image(item.image_url, doc.width, 7 * cm)
         if question_image is not None:
             block.append(question_image)

@@ -46,6 +46,7 @@ def _env_str(name: str, default: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "Smart Paper Service"
+    app_version: str = "0.1.0"
     environment: str = "local"
     cors_origins: tuple[str, ...] = (
         "http://localhost:5173",

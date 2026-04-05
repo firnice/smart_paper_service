@@ -33,6 +33,7 @@ APP_MODULE="${APP_MODULE:-app.main:app}"
 UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/server.log}"
+RUN_MIGRATIONS_ON_START="${RUN_MIGRATIONS_ON_START:-true}"
 
 STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-30}"
 STARTUP_CHECK_INTERVAL_SEC="${STARTUP_CHECK_INTERVAL_SEC:-1}"
@@ -68,7 +69,16 @@ if [[ ! -f "app/core/llm_secrets.py" ]]; then
   exit 1
 fi
 
-# ── 2. 如果端口被占用，kill 掉 ──────────────────────────
+# ── 2. 启动前执行数据库迁移 ─────────────────────────────
+if [[ "$RUN_MIGRATIONS_ON_START" == "true" ]]; then
+  echo "执行数据库迁移..."
+  if ! alembic upgrade head; then
+    echo "错误: 数据库迁移失败"
+    exit 1
+  fi
+fi
+
+# ── 3. 如果端口被占用，kill 掉 ──────────────────────────
 if command -v lsof >/dev/null 2>&1; then
   PIDS="$(lsof -ti tcp:"$PORT" 2>/dev/null || true)"
   if [[ -n "$PIDS" ]]; then
@@ -85,10 +95,10 @@ if command -v lsof >/dev/null 2>&1; then
   fi
 fi
 
-# ── 3. 准备日志目录 ─────────────────────────────────────
+# ── 4. 准备日志目录 ─────────────────────────────────────
 mkdir -p "$LOG_DIR"
 
-# ── 4. 启动服务 ─────────────────────────────────────────
+# ── 5. 启动服务 ─────────────────────────────────────────
 echo ""
 echo "========================================="
 echo "启动 Smart Paper Service"
@@ -124,7 +134,7 @@ fi
 WEB_PID=$!
 echo "服务进程已启动 (PID: $WEB_PID)"
 
-# ── 5. 健康检查，确认服务就绪后退出 ─────────────────────
+# ── 6. 健康检查，确认服务就绪后退出 ─────────────────────
 echo "等待服务就绪..."
 ELAPSED=0
 SERVICE_READY=false

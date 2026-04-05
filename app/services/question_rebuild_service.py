@@ -15,16 +15,16 @@ _OPTION_RE = re.compile(r"^\s*([A-D])[\.、\)]\s*(.+?)\s*$")
 _NUMBER_PREFIX_RE = re.compile(r"^\s*\d+[\.\、\)]\s*")
 
 _SYSTEM_PROMPT = (
-    "You are a worksheet structuring assistant. "
-    "Return strict JSON only."
+    "你是一个试题结构化助手。"
+    "只返回严格 JSON，不要输出任何额外解释。"
 )
 
 _USER_PROMPT_TEMPLATE = (
-    "Convert the question text into JSON with keys: "
-    "stem (string), options (array of strings), sub_questions (array of strings), "
-    "diagram_required (boolean). "
-    "If no options or sub-questions, return empty arrays. "
-    "Question text:\\n{question_text}"
+    "请把下面的题目文字整理成 JSON，包含以下键："
+    "stem（字符串）、options（字符串数组）、sub_questions（字符串数组）、"
+    "diagram_required（布尔值）。"
+    "如果没有选项或没有小问，请返回空数组。"
+    "题目文字如下：\\n{question_text}"
 )
 
 

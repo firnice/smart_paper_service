@@ -38,6 +38,8 @@ class WrongQuestion(Base):
     notes = Column(Text, nullable=True)
     image_url = Column(Text, nullable=True)
     image_name = Column(String(255), nullable=True)
+    original_image_url = Column(Text, nullable=True)
+    original_image_name = Column(String(255), nullable=True)
     first_error_date = Column(Date, default=func.current_date())
     last_review_date = Column(Date, nullable=True)
     last_practice_result = Column(String(20), nullable=True)

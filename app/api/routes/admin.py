@@ -17,6 +17,9 @@ from app.services.agent_config_service import (
     get_agent_config,
     get_llm_client_for_agent,
     list_all_agent_configs,
+    normalize_model_list,
+    parse_fallback_models,
+    serialize_fallback_models,
 )
 
 router = APIRouter()
@@ -29,6 +32,7 @@ def _config_to_response(config) -> AgentConfigResponse:
         description=config.description,
         provider=config.provider,
         model=config.model,
+        fallback_models=list(config.fallback_models),
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
         max_tokens=config.max_tokens,
@@ -58,6 +62,7 @@ def get_agent(node_name: str, db: Session = Depends(get_db)):
             description=defaults.get("description", ""),
             provider=defaults["provider"],
             model="(未配置)",
+            fallback_models=[],
             temperature=defaults.get("temperature", 0.2),
             timeout_seconds=defaults.get("timeout_seconds", 180),
             max_tokens=None,
@@ -99,8 +104,22 @@ def update_agent(node_name: str, payload: AgentConfigUpdate, db: Session = Depen
         row.description = payload.description
     if payload.provider is not None:
         row.provider = payload.provider
+    existing_fallback_models = parse_fallback_models(row.fallback_models)
     if payload.model is not None:
+        previous_model = row.model
         row.model = payload.model
+        fallback_models = (
+            normalize_model_list(payload.fallback_models)
+            if payload.fallback_models is not None
+            else list(existing_fallback_models)
+        )
+        if previous_model and previous_model != row.model:
+            fallback_models = [previous_model, *fallback_models]
+        fallback_models = [model for model in normalize_model_list(fallback_models) if model != row.model]
+        row.fallback_models = serialize_fallback_models(fallback_models)
+    elif payload.fallback_models is not None:
+        fallback_models = [model for model in normalize_model_list(payload.fallback_models) if model != row.model]
+        row.fallback_models = serialize_fallback_models(fallback_models)
     if payload.temperature is not None:
         row.temperature = payload.temperature
     if payload.timeout_seconds is not None:

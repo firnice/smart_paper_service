@@ -109,6 +109,8 @@ alembic upgrade head
 ```
 
 - Swagger: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+- OpenAPI JSON: `http://localhost:8000/openapi.json`
 - 健康检查: `http://localhost:8000/api/health`
 
 ### 5) 冒烟测试与示例脚本

@@ -21,6 +21,8 @@ class WrongQuestionCreate(BaseModel):
     notes: Optional[str] = None
     image_url: Optional[str] = None
     image_name: Optional[str] = Field(default=None, max_length=255)
+    original_image_url: Optional[str] = None
+    original_image_name: Optional[str] = Field(default=None, max_length=255)
     first_error_date: Optional[date] = None
     paper_id: Optional[int] = None
     question_id: Optional[int] = None
@@ -44,6 +46,8 @@ class WrongQuestionUpdate(BaseModel):
     notes: Optional[str] = None
     image_url: Optional[str] = None
     image_name: Optional[str] = Field(default=None, max_length=255)
+    original_image_url: Optional[str] = None
+    original_image_name: Optional[str] = Field(default=None, max_length=255)
     first_error_date: Optional[date] = None
     last_review_date: Optional[date] = None
     paper_id: Optional[int] = None
@@ -96,6 +100,8 @@ class WrongQuestionResponse(BaseModel):
     notes: Optional[str]
     image_url: Optional[str]
     image_name: Optional[str]
+    original_image_url: Optional[str]
+    original_image_name: Optional[str]
     first_error_date: Optional[date]
     last_review_date: Optional[date]
     last_practice_result: Optional[str]
