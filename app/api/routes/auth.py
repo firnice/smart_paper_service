@@ -1,4 +1,5 @@
 from uuid import uuid4
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -121,10 +122,10 @@ def _reload_student(db: Session, user_id: int) -> User:
 def _upsert_student_profile(
     db: Session,
     user_id: int,
-    student_no: str | None,
+    student_no: Optional[str],
     grade: str,
-    class_name: str | None = None,
-    school_name: str | None = None,
+    class_name: Optional[str] = None,
+    school_name: Optional[str] = None,
 ) -> None:
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
     if profile:
@@ -149,7 +150,7 @@ def _upsert_student_profile(
     )
 
 
-def _find_student_by_student_no(db: Session, student_no: str) -> User | None:
+def _find_student_by_student_no(db: Session, student_no: str) -> Optional[User]:
     return (
         db.query(User)
         .options(joinedload(User.student_profile))

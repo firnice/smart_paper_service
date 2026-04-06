@@ -7,7 +7,18 @@
       "Bash(python3.11 --version)",
       "Bash(python3.11:*)",
       "Bash(bash:*)",
-      "Bash(open:*)"
+      "Bash(open:*)",
+      "Bash(python -c ':*)",
+      "Bash(python -m py_compile app/db/models/wrong_question.py app/schemas/variants.py app/services/variant_service.py app/api/routes/variants.py)",
+      "Bash(grep -E \"\\\\.\\(py\\)$\")",
+      "Bash(grep:*)",
+      "Bash(curl -s -X POST http://localhost:8000/api/variants/generate-for-question -H 'Content-Type: application/json' -d '{\"wrong_question_id\": 2, \"count\": 1}')",
+      "Bash(python -c \"import cairosvg; print\\('cairosvg ok'\\)\")",
+      "Bash(python -c \"from svglib.svglib import svg2rlg; print\\('svglib ok'\\)\")",
+      "Bash(python -c \"import reportlab; print\\(reportlab.Version\\)\")",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/python3:*)",
+      "Bash(fc-list :lang=zh)"
     ]
   }
 }

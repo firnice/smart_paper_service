@@ -10,6 +10,7 @@ from typing import Any, Optional
 from urllib import error, request
 
 from app.core.logger import logger
+from app.core.trace import TRACE_HEADER_NAME, compose_trace_id
 
 _MAX_LOG_CHARS = 2800
 
@@ -79,13 +80,17 @@ def post_json(
     timeout_seconds: int = 180,
 ) -> dict[str, Any]:
     """发送 POST JSON 请求，统一记录请求/响应/耗时日志。"""
-    merged_headers = {"Content-Type": "application/json"}
+    effective_trace_id = compose_trace_id(trace_id)
+    merged_headers = {
+        "Content-Type": "application/json",
+        TRACE_HEADER_NAME: effective_trace_id,
+    }
     if headers:
         merged_headers.update(headers)
 
     logger.info(
         "HTTP_OUT request trace_id=%s url=%s body=%s",
-        trace_id,
+        effective_trace_id,
         url,
         _to_json_preview(body),
     )
@@ -106,7 +111,7 @@ def post_json(
         resp_body = exc.read().decode("utf-8", errors="replace")
         logger.error(
             "HTTP_OUT error trace_id=%s url=%s status=%s elapsed_ms=%d body=%s",
-            trace_id,
+            effective_trace_id,
             url,
             exc.code,
             elapsed_ms,
@@ -117,7 +122,7 @@ def post_json(
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.warning(
             "HTTP_OUT network_error trace_id=%s url=%s elapsed_ms=%d err=%s",
-            trace_id,
+            effective_trace_id,
             url,
             elapsed_ms,
             str(exc),
@@ -127,7 +132,7 @@ def post_json(
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
         "HTTP_OUT response trace_id=%s url=%s elapsed_ms=%d body=%s",
-        trace_id,
+        effective_trace_id,
         url,
         elapsed_ms,
         _truncate(raw),

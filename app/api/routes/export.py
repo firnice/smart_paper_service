@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models.export import Export
 from app.db.session import get_db
-from app.schemas.export import ExportRequest, ExportResponse
+from app.schemas.export import (
+    ExportRequest,
+    ExportResponse,
+    PrintPackExportRequest,
+    PrintPackExportResponse,
+)
 from app.services import export_service
 
 router = APIRouter()
@@ -60,4 +65,42 @@ def get_export_status(job_id: str, db: Session = Depends(get_db)):
         job_id=export_record.job_id,
         status=export_record.status,
         download_url=export_record.download_url,
+    )
+
+
+@router.post("/api/print-pack/export", response_model=PrintPackExportResponse)
+def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depends(get_db)):
+    response = export_service.create_print_pack_export(
+        title=payload.title,
+        paper_meta=payload.paper_meta,
+        items=payload.items,
+        answer_mode=payload.answer_mode,
+    )
+
+    export_record = Export(
+        job_id=response.job_id,
+        title=payload.title,
+        original_text="",
+        variants_json=[item.model_dump() for item in payload.items],
+        include_images=any(bool((item.image_url or "").strip()) for item in payload.items),
+        format="pdf",
+        status=response.status,
+        download_url=response.download_url,
+        error_message=None if response.status == "completed" else "Print-pack export failed",
+    )
+    db.add(export_record)
+    try:
+        db.commit()
+        db.refresh(export_record)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist print-pack export record",
+        ) from exc
+
+    return PrintPackExportResponse(
+        id=export_record.id,
+        status=response.status,
+        download_url=response.download_url,
     )

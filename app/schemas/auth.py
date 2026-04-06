@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -45,4 +45,4 @@ class StudentLoginConfigResponse(BaseModel):
     title: str
     subtitle: str
     help_text: str
-    preset_accounts: list[StudentLoginPresetAccount] = []
+    preset_accounts: List[StudentLoginPresetAccount] = Field(default_factory=list)

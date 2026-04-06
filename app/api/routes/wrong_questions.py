@@ -3,6 +3,7 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.params import Param
 from sqlalchemy import extract, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -164,6 +165,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         question_id=item.question_id,
         title=item.title,
         content=item.content,
+        reference_answer=item.reference_answer,
+        analysis=item.analysis,
         subject=subject,
         grade=item.grade,
         question_type=item.question_type,
@@ -176,9 +179,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         is_bookmarked=item.is_bookmarked,
         notes=item.notes,
         image_url=item.image_url,
-        image_name=item.image_name,
         original_image_url=item.original_image_url,
-        original_image_name=item.original_image_name,
+        svg=item.svg,
         first_error_date=item.first_error_date,
         last_review_date=item.last_review_date,
         last_practice_result=item.last_practice_result,
@@ -227,6 +229,8 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         question_id=payload.question_id,
         title=payload.title,
         content=payload.content,
+        reference_answer=payload.reference_answer,
+        analysis=payload.analysis,
         subject_id=payload.subject_id,
         grade=resolved_grade,
         question_type=payload.question_type,
@@ -238,9 +242,8 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         is_bookmarked=payload.is_bookmarked,
         notes=payload.notes,
         image_url=payload.image_url,
-        image_name=payload.image_name,
         original_image_url=payload.original_image_url,
-        original_image_name=payload.original_image_name,
+        svg=payload.svg,
         first_error_date=payload.first_error_date or date.today(),
     )
     db.add(wrong_question)
@@ -279,6 +282,14 @@ def _parse_term_filter(term: str):
     return match.group(1), match.group(2)
 
 
+def _resolve_param_value(value, default):
+    if isinstance(value, Param):
+        if value.default is ...:
+            return default
+        return value.default
+    return value
+
+
 VALID_SORT_FIELDS = {"updated_at", "created_at", "first_error_date", "error_count"}
 VALID_SORT_ORDERS = {"asc", "desc"}
 
@@ -300,6 +311,10 @@ def list_wrong_questions(
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
+    status_value = _resolve_param_value(status_value, None)
+    offset = _resolve_param_value(offset, 0)
+    limit = _resolve_param_value(limit, 20)
+
     query = db.query(WrongQuestion)
     if error_reason_id is not None:
         query = query.join(
@@ -506,6 +521,9 @@ def list_study_records(
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
+    offset = _resolve_param_value(offset, 0)
+    limit = _resolve_param_value(limit, 20)
+
     _get_wrong_question_or_404(db, wrong_question_id)
 
     query = db.query(StudyRecord).filter(StudyRecord.wrong_question_id == wrong_question_id)

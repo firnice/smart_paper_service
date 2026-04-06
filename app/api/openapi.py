@@ -105,6 +105,10 @@ OPERATION_METADATA: dict[tuple[str, str], dict[str, str]] = {
         "summary": "Create Export Task",
         "description": "Create a PDF export task for single-question or multi-question print packages and return the job result.",
     },
+    ("POST", "/api/print-pack/export"): {
+        "summary": "Create Print Pack Export",
+        "description": "Create a PDF print pack from the frontend-provided ordered question array and return the persisted export record.",
+    },
     ("GET", "/api/export/{job_id}"): {
         "summary": "Get Export Status",
         "description": "Look up a previously created export job by job ID and return its current status and download URL.",

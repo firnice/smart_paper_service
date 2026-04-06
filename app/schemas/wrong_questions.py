@@ -8,6 +8,8 @@ class WrongQuestionCreate(BaseModel):
     student_id: int
     content: str = Field(..., min_length=1)
     title: Optional[str] = Field(default=None, max_length=255)
+    reference_answer: Optional[str] = None
+    analysis: Optional[str] = None
     subject_id: Optional[int] = None
     grade: Optional[str] = Field(default=None, max_length=20)
     question_type: Optional[str] = Field(default=None, max_length=50)
@@ -20,9 +22,8 @@ class WrongQuestionCreate(BaseModel):
     is_bookmarked: bool = False
     notes: Optional[str] = None
     image_url: Optional[str] = None
-    image_name: Optional[str] = Field(default=None, max_length=255)
     original_image_url: Optional[str] = None
-    original_image_name: Optional[str] = Field(default=None, max_length=255)
+    svg: Optional[str] = None
     first_error_date: Optional[date] = None
     paper_id: Optional[int] = None
     question_id: Optional[int] = None
@@ -33,6 +34,8 @@ class WrongQuestionUpdate(BaseModel):
     student_id: Optional[int] = None
     content: Optional[str] = Field(default=None, min_length=1)
     title: Optional[str] = Field(default=None, max_length=255)
+    reference_answer: Optional[str] = None
+    analysis: Optional[str] = None
     subject_id: Optional[int] = None
     grade: Optional[str] = Field(default=None, max_length=20)
     question_type: Optional[str] = Field(default=None, max_length=50)
@@ -45,9 +48,8 @@ class WrongQuestionUpdate(BaseModel):
     is_bookmarked: Optional[bool] = None
     notes: Optional[str] = None
     image_url: Optional[str] = None
-    image_name: Optional[str] = Field(default=None, max_length=255)
     original_image_url: Optional[str] = None
-    original_image_name: Optional[str] = Field(default=None, max_length=255)
+    svg: Optional[str] = None
     first_error_date: Optional[date] = None
     last_review_date: Optional[date] = None
     paper_id: Optional[int] = None
@@ -87,6 +89,8 @@ class WrongQuestionResponse(BaseModel):
     question_id: Optional[int]
     title: Optional[str]
     content: str
+    reference_answer: Optional[str]
+    analysis: Optional[str]
     subject: Optional[SubjectBrief]
     grade: str
     question_type: Optional[str]
@@ -99,9 +103,8 @@ class WrongQuestionResponse(BaseModel):
     is_bookmarked: bool
     notes: Optional[str]
     image_url: Optional[str]
-    image_name: Optional[str]
     original_image_url: Optional[str]
-    original_image_name: Optional[str]
+    svg: Optional[str]
     first_error_date: Optional[date]
     last_review_date: Optional[date]
     last_practice_result: Optional[str]

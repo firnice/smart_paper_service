@@ -9,6 +9,7 @@ from app.db.models.subject import Subject
 from app.db.session import get_db
 from app.schemas.variants import (
     VariantItemResponse,
+    VariantSourceQuestionResponse,
     VariantsForQuestionRequest,
     VariantsForQuestionResponse,
     VariantsRequest,
@@ -52,12 +53,17 @@ def generate_variants_for_question(
         if subject:
             subject_name = subject.name
 
+    # svg 字段优先；历史数据中 svg URL 存在 image_url（.svg 结尾）
+    source_svg = wq.svg or (wq.image_url if (wq.image_url or "").endswith(".svg") else None)
+
     try:
-        items = variant_service.generate_variants_for_question(
+        items, used_prompt = variant_service.generate_variants_for_question(
             source_text=wq.content,
             count=payload.count,
             grade=wq.grade,
             subject=subject_name,
+            prompt=payload.prompt,
+            source_svg=source_svg,
             db=db,
         )
     except RuntimeError as exc:
@@ -66,8 +72,23 @@ def generate_variants_for_question(
 
     return VariantsForQuestionResponse(
         source_question_id=payload.wrong_question_id,
+        used_prompt=used_prompt,
+        source_question=VariantSourceQuestionResponse(
+            id=wq.id,
+            text=wq.content,
+            image_url=wq.image_url,
+            reference_answer=wq.reference_answer,
+            analysis=wq.analysis,
+            svg=source_svg,
+        ),
         items=[
-            VariantItemResponse(text=item.text, answer=item.answer, hint=item.hint)
-            for item in items
+            VariantItemResponse(
+                id=f"var_{index:03d}",
+                text=item.text,
+                answer=item.answer,
+                hint=item.hint,
+                svg=item.svg,
+            )
+            for index, item in enumerate(items, start=1)
         ],
     )

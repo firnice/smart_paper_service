@@ -124,6 +124,32 @@ class LocalStorageService:
         return f"{self.base_url}/exports/{filename}"
 
 
+    def read_asset_bytes(self, asset_url: str) -> Optional[bytes]:
+        """
+        根据 storage URL（如 http://host/static/questions/xxx.svg）读取文件内容。
+        仅支持本地 static 路径，不发起网络请求。
+        返回 None 表示文件不存在或 URL 不合法。
+        """
+        from urllib.parse import urlparse
+        value = str(asset_url or "").strip()
+        if not value:
+            return None
+        parsed = urlparse(value)
+        path = parsed.path or value
+        prefix = "/static/"
+        if not path.startswith(prefix):
+            return None
+        relative_path = path[len(prefix):].lstrip("/")
+        file_path = (self.base_dir / relative_path).resolve()
+        try:
+            file_path.relative_to(self.base_dir.resolve())
+        except ValueError:
+            return None
+        if not file_path.is_file():
+            return None
+        return file_path.read_bytes()
+
+
 # 全局存储服务实例（单例模式）
 _storage: Optional[LocalStorageService] = None
 

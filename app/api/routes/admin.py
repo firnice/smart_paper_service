@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -43,7 +43,7 @@ def _config_to_response(config) -> AgentConfigResponse:
     )
 
 
-@router.get("/api/admin/agents", response_model=list[AgentConfigResponse])
+@router.get("/api/admin/agents", response_model=List[AgentConfigResponse])
 def list_agents(db: Session = Depends(get_db)):
     configs = list_all_agent_configs(db)
     return [_config_to_response(c) for c in configs]

@@ -1,8 +1,10 @@
-from io import BytesIO
-from uuid import uuid4
-from typing import Optional
+from __future__ import annotations
+
 from pathlib import Path
+from io import BytesIO
+from typing import Optional
 from urllib.parse import urlparse, unquote
+from uuid import uuid4
 import mimetypes
 
 from reportlab.lib.utils import ImageReader
@@ -31,7 +33,7 @@ from app.core.logger import logger
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 _FONT_NORMAL = "STSong-Light"
 _FONT_BOLD = "STSong-Light"
-from app.schemas.export import ExportQuestionItem, ExportResponse
+from app.schemas.export import ExportQuestionItem, ExportResponse, PrintPackItem, PrintPackPaperMeta
 
 
 def _resolve_local_image_bytes(image_url: Optional[str]) -> Optional[bytes]:
@@ -75,10 +77,46 @@ def _resolve_local_image_bytes(image_url: Optional[str]) -> Optional[bytes]:
     return file_path.read_bytes()
 
 
+def _svg_bytes_to_png(svg_bytes: bytes) -> Optional[bytes]:
+    """Convert SVG bytes to PNG bytes via cairosvg, with Chinese font fallback."""
+    try:
+        import cairosvg
+
+        # Replace generic font families with a system font that supports Chinese.
+        # cairosvg uses fonttools/pango for font lookup; on macOS sans-serif often
+        # resolves to a Latin-only font. We substitute explicitly.
+        _CHINESE_FONT = "STHeiti"
+        svg_text = svg_bytes.decode("utf-8", errors="replace")
+        import re as _re
+        svg_text = _re.sub(
+            r'font-family\s*=\s*["\']?(sans-serif|serif|monospace|system-ui)["\']?',
+            f'font-family="{_CHINESE_FONT}"',
+            svg_text,
+        )
+        # Also handle CSS style blocks: font-family: sans-serif
+        svg_text = _re.sub(
+            r'font-family\s*:\s*(sans-serif|serif|monospace|system-ui)',
+            f'font-family: {_CHINESE_FONT}',
+            svg_text,
+        )
+        return cairosvg.svg2png(bytestring=svg_text.encode("utf-8"))
+    except Exception as exc:
+        logger.warning("SVG to PNG conversion failed: %s", exc)
+        return None
+
+
 def _build_question_image(image_url: Optional[str], max_width: float, max_height: float):
     image_bytes = _resolve_local_image_bytes(image_url)
     if not image_bytes:
         return None
+    # SVG needs to be converted to PNG for ReportLab
+    stripped = image_bytes.lstrip()
+    is_svg = stripped.startswith(b"<svg") or stripped.startswith(b"<?xml") or b"<svg" in stripped[:512]
+    if is_svg:
+        png_bytes = _svg_bytes_to_png(image_bytes)
+        if not png_bytes:
+            return None
+        image_bytes = png_bytes
     try:
         image = Image(BytesIO(image_bytes))
         image._restrictSize(max_width, max_height)
@@ -93,52 +131,52 @@ def _base_doc_and_styles():
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=2.5 * cm,
-        bottomMargin=2.5 * cm,
-        leftMargin=2.5 * cm,
-        rightMargin=2.5 * cm,
+        topMargin=1.8 * cm,
+        bottomMargin=1.8 * cm,
+        leftMargin=1.8 * cm,
+        rightMargin=1.8 * cm,
     )
     styles = getSampleStyleSheet()
 
     title_style = ParagraphStyle(
         "CustomTitle",
         parent=styles["Heading1"],
-        fontSize=20,
+        fontSize=16,
         alignment=TA_CENTER,
-        spaceAfter=30,
-        spaceBefore=10,
+        spaceAfter=8,
+        spaceBefore=4,
         fontName=_FONT_BOLD,
         textColor=colors.HexColor("#1a1a1a"),
     )
     section_title_style = ParagraphStyle(
         "SectionTitle",
         parent=styles["Heading2"],
-        fontSize=16,
+        fontSize=13,
         alignment=TA_LEFT,
-        spaceAfter=15,
-        spaceBefore=20,
+        spaceAfter=8,
+        spaceBefore=10,
         fontName=_FONT_BOLD,
         textColor=colors.HexColor("#333333"),
-        borderPadding=(5, 10, 5, 10),
+        borderPadding=(3, 8, 3, 8),
         backColor=colors.HexColor("#f0f0f0"),
     )
     question_number_style = ParagraphStyle(
         "QuestionNumber",
         parent=styles["BodyText"],
-        fontSize=14,
+        fontSize=12,
         fontName=_FONT_BOLD,
         textColor=colors.HexColor("#0066cc"),
-        spaceAfter=8,
+        spaceAfter=4,
     )
     question_content_style = ParagraphStyle(
         "QuestionContent",
         parent=styles["BodyText"],
-        fontSize=12,
+        fontSize=11,
         fontName=_FONT_NORMAL,
         alignment=TA_JUSTIFY,
-        leading=20,
-        leftIndent=20,
-        spaceAfter=10,
+        leading=17,
+        leftIndent=12,
+        spaceAfter=6,
     )
     answer_space_style = ParagraphStyle(
         "AnswerSpace",
@@ -146,8 +184,8 @@ def _base_doc_and_styles():
         fontSize=10,
         fontName=_FONT_NORMAL,
         textColor=colors.HexColor("#999999"),
-        leftIndent=20,
-        spaceAfter=15,
+        leftIndent=12,
+        spaceAfter=4,
     )
     footer_style = ParagraphStyle(
         "Footer",
@@ -157,6 +195,26 @@ def _base_doc_and_styles():
         alignment=TA_CENTER,
         textColor=colors.HexColor("#999999"),
     )
+    meta_style = ParagraphStyle(
+        "Meta",
+        parent=styles["BodyText"],
+        fontSize=10,
+        fontName=_FONT_NORMAL,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#4d4d4d"),
+        spaceAfter=6,
+    )
+    answer_style = ParagraphStyle(
+        "Answer",
+        parent=styles["BodyText"],
+        fontSize=10,
+        fontName=_FONT_NORMAL,
+        alignment=TA_LEFT,
+        leading=15,
+        leftIndent=12,
+        textColor=colors.HexColor("#1f5f3f"),
+        spaceAfter=6,
+    )
 
     return buffer, doc, {
         "title": title_style,
@@ -165,10 +223,12 @@ def _base_doc_and_styles():
         "content": question_content_style,
         "answer_space": answer_space_style,
         "footer": footer_style,
+        "meta": meta_style,
+        "answer": answer_style,
     }
 
 
-def _add_answer_lines(story, doc, count=4):
+def _add_answer_lines(story, doc, count=3):
     for _ in range(count):
         line = Table([["_" * 80]], colWidths=[doc.width])
         line.setStyle(
@@ -178,7 +238,7 @@ def _add_answer_lines(story, doc, count=4):
             ])
         )
         story.append(line)
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(Spacer(1, 0.15 * cm))
 
 
 def _question_table(text: str, doc, content_style, background="#fafafa", border="#cccccc"):
@@ -195,6 +255,20 @@ def _question_table(text: str, doc, content_style, background="#fafafa", border=
         ])
     )
     return table
+
+
+def _build_print_pack_meta(paper_meta: PrintPackPaperMeta) -> str:
+    parts = [
+        f"学生：{paper_meta.student_name or ''}",
+        f"班级：{paper_meta.class_name or ''}",
+        f"日期：{paper_meta.date or ''}",
+    ]
+    return "　　".join(parts)
+
+
+def _build_answer_text(answer: Optional[str]) -> str:
+    value = (answer or "").strip()
+    return value or "暂无参考答案"
 
 
 def _generate_pdf(
@@ -293,6 +367,68 @@ def _generate_practice_sheet_pdf(
     return buffer.read()
 
 
+def _generate_print_pack_pdf(
+    title: str,
+    paper_meta: PrintPackPaperMeta,
+    items: list[PrintPackItem],
+    answer_mode: str,
+) -> bytes:
+    buffer, doc, styles = _base_doc_and_styles()
+    story = []
+    sorted_items = [item for _, item in sorted(enumerate(items), key=lambda pair: (pair[1].order, pair[0]))]
+
+    story.append(Paragraph(title, styles["title"]))
+    story.append(Paragraph(_build_print_pack_meta(paper_meta), styles["meta"]))
+    story.append(Spacer(1, 0.4 * cm))
+
+    for index, item in enumerate(sorted_items, 1):
+        source_label = "原题" if item.type == "orig" else "AI 同类题"
+        question_image = _build_question_image(item.image_url, doc.width, 5 * cm)
+
+        # 题号行与图片（或题号行与题文）保持在一起，避免题号孤悬
+        header_block = [Paragraph(f"第 {index} 题 · {source_label}", styles["number"])]
+        if question_image is not None:
+            header_block.append(question_image)
+            header_block.append(Spacer(1, 0.15 * cm))
+        story.append(KeepTogether(header_block))
+
+        # 题文 + 答案/作答区单独添加，允许跨页
+        story.append(_question_table(item.text, doc, styles["content"]))
+        story.append(Spacer(1, 0.15 * cm))
+
+        if answer_mode == "inline":
+            story.append(Paragraph(f"参考答案：{_build_answer_text(item.answer)}", styles["answer"]))
+        else:
+            story.append(Paragraph("【作答区】", styles["answer_space"]))
+            _add_answer_lines(story, doc, count=3)
+
+        if index < len(sorted_items):
+            story.append(Spacer(1, 0.3 * cm))
+            divider = Table([[""]], colWidths=[doc.width])
+            divider.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#e0e0e0"))]))
+            story.append(divider)
+            story.append(Spacer(1, 0.3 * cm))
+
+    if answer_mode == "sheet":
+        items_with_answer = [item for item in sorted_items if (item.answer or "").strip()]
+        if items_with_answer:
+            story.append(PageBreak())
+            story.append(Paragraph("参考答案", styles["section"]))
+            story.append(Spacer(1, 0.4 * cm))
+            for index, item in enumerate(sorted_items, 1):
+                if not (item.answer or "").strip():
+                    continue
+                story.append(
+                    Paragraph(f"第 {index} 题：{_build_answer_text(item.answer)}", styles["answer"])
+                )
+
+    story.append(Spacer(1, 0.8 * cm))
+    story.append(Paragraph("—— 智能错题本打印重做包 ——", styles["footer"]))
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()
+
+
 def create_export(
     title: str,
     original_text: Optional[str],
@@ -327,4 +463,36 @@ def create_export(
         return ExportResponse(job_id=job_id, status="completed", download_url=download_url)
     except Exception:
         logger.exception("Export failed: job_id=%s mode=%s", job_id, mode)
+        return ExportResponse(job_id=job_id, status="failed", download_url=None)
+
+
+def create_print_pack_export(
+    title: str,
+    paper_meta: PrintPackPaperMeta,
+    items: list[PrintPackItem],
+    answer_mode: str,
+) -> ExportResponse:
+    from app.services.storage_service import get_storage_service
+
+    job_id = str(uuid4())
+
+    try:
+        pdf_bytes = _generate_print_pack_pdf(
+            title=title,
+            paper_meta=paper_meta,
+            items=items,
+            answer_mode=answer_mode,
+        )
+        storage = get_storage_service()
+        download_url = storage.upload_export(pdf_bytes, job_id, format="pdf")
+        logger.info(
+            "Print-pack export completed: job_id=%s answer_mode=%s items=%d url=%s",
+            job_id,
+            answer_mode,
+            len(items),
+            download_url,
+        )
+        return ExportResponse(job_id=job_id, status="completed", download_url=download_url)
+    except Exception:
+        logger.exception("Print-pack export failed: job_id=%s answer_mode=%s", job_id, answer_mode)
         return ExportResponse(job_id=job_id, status="failed", download_url=None)

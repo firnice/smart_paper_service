@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ class TrendAnalysisResponse(BaseModel):
     status: str
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
-    analysis_result: Optional[dict[str, Any]] = None
+    analysis_result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
 
 

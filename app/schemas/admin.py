@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,7 @@ class AgentConfigResponse(BaseModel):
     description: str
     provider: str
     model: str
-    fallback_models: list[str] = Field(default_factory=list)
+    fallback_models: List[str] = Field(default_factory=list)
     temperature: float
     timeout_seconds: int
     max_tokens: Optional[int] = None
@@ -25,7 +25,7 @@ class AgentConfigUpdate(BaseModel):
     description: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
-    fallback_models: Optional[list[str]] = None
+    fallback_models: Optional[List[str]] = None
     temperature: Optional[float] = None
     timeout_seconds: Optional[int] = None
     max_tokens: Optional[int] = None

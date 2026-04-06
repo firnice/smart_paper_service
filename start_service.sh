@@ -34,10 +34,33 @@ UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/server.log}"
 RUN_MIGRATIONS_ON_START="${RUN_MIGRATIONS_ON_START:-true}"
+DEV_RELOAD="${DEV_RELOAD:-true}"
 
 STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-30}"
 STARTUP_CHECK_INTERVAL_SEC="${STARTUP_CHECK_INTERVAL_SEC:-1}"
 HEALTH_URL="http://127.0.0.1:$PORT/api/health"
+RELOAD_DIR_APP="${RELOAD_DIR_APP:-$ROOT_DIR/app}"
+RELOAD_DIR_ALEMBIC="${RELOAD_DIR_ALEMBIC:-$ROOT_DIR/alembic}"
+
+start_dev_server() {
+  local use_reload="$1"
+  if [[ "$use_reload" == "true" ]]; then
+    WATCHFILES_FORCE_POLLING="${WATCHFILES_FORCE_POLLING:-true}" \
+    WATCHFILES_IGNORE_PERMISSION_DENIED="${WATCHFILES_IGNORE_PERMISSION_DENIED:-true}" \
+    "$PYTHON_BIN" -m uvicorn "$APP_MODULE" \
+      --host 0.0.0.0 --port "$PORT" \
+      --log-level "$UVICORN_LOG_LEVEL" --reload \
+      --reload-dir "$RELOAD_DIR_APP" \
+      --reload-dir "$RELOAD_DIR_ALEMBIC" \
+      >> "$LOG_FILE" 2>&1 &
+  else
+    "$PYTHON_BIN" -m uvicorn "$APP_MODULE" \
+      --host 0.0.0.0 --port "$PORT" \
+      --log-level "$UVICORN_LOG_LEVEL" \
+      >> "$LOG_FILE" 2>&1 &
+  fi
+  echo $!
+}
 
 # ── 1. 检测并激活 Python 环境 ───────────────────────────
 cd "$ROOT_DIR"
@@ -110,17 +133,35 @@ echo "========================================="
 if [[ "$DEBUG_MODE" == true ]]; then
   echo "调试模式：前台运行，Ctrl+C 停止"
   echo ""
+  if [[ "$DEV_RELOAD" == "true" ]]; then
+    exec env \
+      WATCHFILES_FORCE_POLLING="${WATCHFILES_FORCE_POLLING:-true}" \
+      WATCHFILES_IGNORE_PERMISSION_DENIED="${WATCHFILES_IGNORE_PERMISSION_DENIED:-true}" \
+      "$PYTHON_BIN" -m uvicorn "$APP_MODULE" \
+        --host 0.0.0.0 --port "$PORT" \
+        --log-level debug --reload \
+        --reload-dir "$RELOAD_DIR_APP" \
+        --reload-dir "$RELOAD_DIR_ALEMBIC"
+  fi
   exec "$PYTHON_BIN" -m uvicorn "$APP_MODULE" \
     --host 0.0.0.0 --port "$PORT" \
-    --log-level debug --reload
+    --log-level debug
   # exec 替换当前进程，不会继续往下执行
 fi
 
 if [[ "$MODE" == "dev" ]]; then
-  "$PYTHON_BIN" -m uvicorn "$APP_MODULE" \
-    --host 0.0.0.0 --port "$PORT" \
-    --log-level "$UVICORN_LOG_LEVEL" --reload \
-    >> "$LOG_FILE" 2>&1 &
+  if [[ "$DEV_RELOAD" == "true" ]]; then
+    WEB_PID="$(start_dev_server true)"
+    sleep 2
+    if ! kill -0 "$WEB_PID" 2>/dev/null; then
+      if tail -50 "$LOG_FILE" | grep -q "Operation not permitted"; then
+        echo "检测到文件监听权限问题，回退为无热重载模式"
+        WEB_PID="$(start_dev_server false)"
+      fi
+    fi
+  else
+    WEB_PID="$(start_dev_server false)"
+  fi
 else
   WORKERS="${UVICORN_WORKERS:-4}"
   "$PYTHON_BIN" -m gunicorn -k uvicorn.workers.UvicornWorker \
@@ -129,9 +170,8 @@ else
     --log-level "$UVICORN_LOG_LEVEL" \
     --timeout 180 --graceful-timeout 30 \
     >> "$LOG_FILE" 2>&1 &
+  WEB_PID=$!
 fi
-
-WEB_PID=$!
 echo "服务进程已启动 (PID: $WEB_PID)"
 
 # ── 6. 健康检查，确认服务就绪后退出 ─────────────────────

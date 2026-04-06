@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import base64
 import binascii
 import mimetypes
 import time
 from pathlib import Path
+from typing import Optional
 from urllib.parse import unquote_to_bytes, urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -78,7 +81,7 @@ def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
 )
 async def extract_questions(
     file: UploadFile = File(...),
-    prompt: str | None = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
     db: Session = Depends(get_db)
 ):
     """
@@ -251,7 +254,7 @@ async def extract_questions(
 )
 async def extract_questions_simple(
     file: UploadFile = File(...),
-    prompt: str | None = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
 ):
     """
     题目提取（简单版本，不入库）
