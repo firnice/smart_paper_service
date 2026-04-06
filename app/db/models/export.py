@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, DateTime, func
+from sqlalchemy import Column, ForeignKey, Integer, String, Text, Boolean, JSON, DateTime, func
+from sqlalchemy.orm import relationship
+
 from app.db.base import Base
 
 
@@ -17,5 +19,9 @@ class Export(Base):
     status = Column(String(50), default="pending")  # pending, processing, completed, failed
     download_url = Column(String(512), nullable=True)
     error_message = Column(Text, nullable=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    term_id = Column(Integer, ForeignKey("school_terms.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    term = relationship("SchoolTerm", back_populates="exports")

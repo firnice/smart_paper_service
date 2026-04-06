@@ -18,7 +18,10 @@
       "Bash(python -c \"import reportlab; print\\(reportlab.Version\\)\")",
       "Bash(.venv/bin/pip install:*)",
       "Bash(.venv/bin/python3:*)",
-      "Bash(fc-list :lang=zh)"
+      "Bash(fc-list :lang=zh)",
+      "Bash(python:*)",
+      "Bash(.venv/bin/alembic upgrade:*)",
+      "Bash(sqlite3:*)"
     ]
   }
 }

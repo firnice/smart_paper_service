@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from app.db.models import User
 from app.db.models.export import Export
+from app.db.models.student_profile import StudentProfile
 from app.db.session import get_db
 from app.schemas.export import (
     ExportRequest,
@@ -10,6 +12,7 @@ from app.schemas.export import (
     PrintPackExportResponse,
 )
 from app.services import export_service
+from app.services import term_service
 
 router = APIRouter()
 
@@ -77,6 +80,19 @@ def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depe
         answer_mode=payload.answer_mode,
     )
 
+    # Resolve term from student profile
+    resolved_term_id = None
+    if payload.student_id:
+        student = (
+            db.query(User)
+            .options(joinedload(User.student_profile).joinedload(StudentProfile.current_term))
+            .filter(User.id == payload.student_id)
+            .first()
+        )
+        if student and student.student_profile:
+            resolved_term = term_service.get_effective_term(db, student.student_profile)
+            resolved_term_id = resolved_term.id if resolved_term else None
+
     export_record = Export(
         job_id=response.job_id,
         title=payload.title,
@@ -87,6 +103,8 @@ def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depe
         status=response.status,
         download_url=response.download_url,
         error_message=None if response.status == "completed" else "Print-pack export failed",
+        student_id=payload.student_id,
+        term_id=resolved_term_id,
     )
     db.add(export_record)
     try:

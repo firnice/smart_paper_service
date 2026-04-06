@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Param
-from sqlalchemy import extract, or_
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -20,6 +20,7 @@ from app.db.models import (
     WrongQuestionErrorReason,
 )
 from app.db.session import get_db
+from app.schemas.school_terms import SchoolTermResponse
 from app.schemas.wrong_questions import (
     CategoryBrief,
     ErrorReasonBrief,
@@ -33,6 +34,7 @@ from app.schemas.wrong_questions import (
     WrongQuestionResponse,
     WrongQuestionUpdate,
 )
+from app.services import term_service
 
 router = APIRouter()
 
@@ -55,6 +57,7 @@ def _get_wrong_question_or_404(db: Session, wrong_question_id: int) -> WrongQues
             joinedload(WrongQuestion.student).joinedload(User.student_profile),
             joinedload(WrongQuestion.subject),
             joinedload(WrongQuestion.category),
+            joinedload(WrongQuestion.term),
             selectinload(WrongQuestion.reason_links).joinedload(WrongQuestionErrorReason.error_reason),
         )
         .filter(WrongQuestion.id == wrong_question_id)
@@ -157,6 +160,10 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
             )
         )
 
+    term = None
+    if item.term:
+        term = SchoolTermResponse.model_validate(item.term)
+
     return WrongQuestionResponse(
         id=item.id,
         student=_build_student_brief(item.student),
@@ -169,6 +176,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         analysis=item.analysis,
         subject=subject,
         grade=item.grade,
+        term_id=item.term_id,
+        term=term,
         question_type=item.question_type,
         difficulty=item.difficulty,
         category=category,
@@ -222,6 +231,12 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
             detail="grade is required (or configure student_profile.grade)",
         )
 
+    resolved_first_error_date = payload.first_error_date or date.today()
+    resolved_term = term_service.get_effective_term(db, student.student_profile, payload.term_id)
+    # If no stored term yet, infer from grade + first_error_date
+    if resolved_term is None:
+        resolved_term = term_service.infer_term_from_grade_and_date(db, resolved_grade, resolved_first_error_date)
+
     wrong_question = WrongQuestion(
         student_id=payload.student_id,
         created_by_user_id=payload.created_by_user_id,
@@ -233,6 +248,7 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         analysis=payload.analysis,
         subject_id=payload.subject_id,
         grade=resolved_grade,
+        term_id=resolved_term.id if resolved_term else None,
         question_type=payload.question_type,
         difficulty=payload.difficulty,
         category_id=payload.category_id,
@@ -244,7 +260,7 @@ def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(ge
         image_url=payload.image_url,
         original_image_url=payload.original_image_url,
         svg=payload.svg,
-        first_error_date=payload.first_error_date or date.today(),
+        first_error_date=resolved_first_error_date,
     )
     db.add(wrong_question)
     db.flush()
@@ -304,7 +320,7 @@ def list_wrong_questions(
     error_reason_id: Optional[int] = None,
     is_bookmarked: Optional[bool] = None,
     keyword: Optional[str] = None,
-    term: Optional[str] = None,
+    term_id: Optional[int] = None,
     sort_by: Optional[str] = None,
     sort_order: Optional[str] = None,
     offset: int = Query(default=0, ge=0),
@@ -325,6 +341,7 @@ def list_wrong_questions(
         joinedload(WrongQuestion.student).joinedload(User.student_profile),
         joinedload(WrongQuestion.subject),
         joinedload(WrongQuestion.category),
+        joinedload(WrongQuestion.term),
         selectinload(WrongQuestion.reason_links).joinedload(WrongQuestionErrorReason.error_reason),
     )
 
@@ -350,19 +367,8 @@ def list_wrong_questions(
                 WrongQuestion.notes.like(like_pattern),
             )
         )
-
-    if term is not None:
-        parsed_grade, semester = _parse_term_filter(term)
-        if parsed_grade and semester:
-            query = query.filter(WrongQuestion.grade == parsed_grade)
-            if semester == "上":
-                query = query.filter(
-                    extract("month", WrongQuestion.first_error_date).in_([9, 10, 11, 12, 1])
-                )
-            else:
-                query = query.filter(
-                    extract("month", WrongQuestion.first_error_date).in_([2, 3, 4, 5, 6, 7, 8])
-                )
+    if term_id is not None:
+        query = query.filter(WrongQuestion.term_id == term_id)
 
     resolved_sort_by = sort_by if sort_by in VALID_SORT_FIELDS else "updated_at"
     resolved_sort_order = sort_order if sort_order in VALID_SORT_ORDERS else "desc"

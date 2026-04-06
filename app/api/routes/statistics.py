@@ -39,8 +39,11 @@ def _wrong_question_filters(
     student_id: int,
     start_date: Optional[date],
     end_date: Optional[date],
+    term_id: Optional[int] = None,
 ):
     filters = [WrongQuestion.student_id == student_id]
+    if term_id is not None:
+        filters.append(WrongQuestion.term_id == term_id)
     if start_date is not None:
         filters.append(WrongQuestion.first_error_date >= start_date)
     if end_date is not None:
@@ -200,10 +203,11 @@ def get_statistics_overview(
     student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    term_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     _validate_student(db, student_id)
-    wrong_filters = _wrong_question_filters(student_id, start_date, end_date)
+    wrong_filters = _wrong_question_filters(student_id, start_date, end_date, term_id)
     study_filters = _study_record_filters(student_id, start_date, end_date)
 
     total_wrong_questions = db.query(func.count(WrongQuestion.id)).filter(*wrong_filters).scalar() or 0

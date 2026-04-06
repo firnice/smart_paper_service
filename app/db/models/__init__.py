@@ -1,3 +1,4 @@
+from app.db.models.school_term import SchoolTerm
 from app.db.models.paper import Paper
 from app.db.models.question import Question
 from app.db.models.question_image import QuestionImage
@@ -16,6 +17,7 @@ from app.db.models.agent_config import AgentConfig
 from app.db.models.trend_analysis import TrendAnalysis
 
 __all__ = [
+    "SchoolTerm",
     "Paper",
     "Question",
     "QuestionImage",

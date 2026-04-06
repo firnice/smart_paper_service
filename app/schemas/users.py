@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.school_terms import SchoolTermResponse
+
 
 class StudentProfilePayload(BaseModel):
     student_no: Optional[str] = Field(default=None, max_length=64)
@@ -10,6 +12,7 @@ class StudentProfilePayload(BaseModel):
     class_name: Optional[str] = Field(default=None, max_length=50)
     school_name: Optional[str] = Field(default=None, max_length=255)
     guardian_note: Optional[str] = None
+    birth_date: Optional[str] = Field(default=None, max_length=7)  # "YYYY-MM"
 
 
 class UserCreate(BaseModel):
@@ -38,6 +41,9 @@ class StudentProfileResponse(BaseModel):
     class_name: Optional[str]
     school_name: Optional[str]
     guardian_note: Optional[str]
+    birth_date: Optional[str] = None
+    current_term_id: Optional[int] = None
+    current_term: Optional[SchoolTermResponse] = None
     created_at: datetime
     updated_at: datetime
 

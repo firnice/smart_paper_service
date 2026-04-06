@@ -41,6 +41,7 @@ class WrongQuestion(Base):
     image_url = Column(Text, nullable=True)
     original_image_url = Column(Text, nullable=True)
     svg = Column(Text, nullable=True)
+    term_id = Column(Integer, ForeignKey("school_terms.id"), nullable=True, index=True)
     first_error_date = Column(Date, default=func.current_date())
     last_review_date = Column(Date, nullable=True)
     last_practice_result = Column(String(20), nullable=True)
@@ -49,6 +50,7 @@ class WrongQuestion(Base):
 
     # Relationships
     student = relationship("User", foreign_keys=[student_id], back_populates="wrong_questions")
+    term = relationship("SchoolTerm", back_populates="wrong_questions")
     created_by_user = relationship(
         "User",
         foreign_keys=[created_by_user_id],

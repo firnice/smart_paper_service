@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.school_terms import SchoolTermResponse
+
 
 class WrongQuestionCreate(BaseModel):
     student_id: int
@@ -12,6 +14,7 @@ class WrongQuestionCreate(BaseModel):
     analysis: Optional[str] = None
     subject_id: Optional[int] = None
     grade: Optional[str] = Field(default=None, max_length=20)
+    term_id: Optional[int] = None
     question_type: Optional[str] = Field(default=None, max_length=50)
     difficulty: str = Field(default="medium", max_length=20)
     category_id: Optional[int] = None
@@ -93,6 +96,8 @@ class WrongQuestionResponse(BaseModel):
     analysis: Optional[str]
     subject: Optional[SubjectBrief]
     grade: str
+    term_id: Optional[int] = None
+    term: Optional[SchoolTermResponse] = None
     question_type: Optional[str]
     difficulty: str
     category: Optional[CategoryBrief]

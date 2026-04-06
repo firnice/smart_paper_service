@@ -42,9 +42,10 @@ def _validate_status(user_status: str) -> None:
 
 
 def _get_user_or_404(db: Session, user_id: int) -> User:
+    from app.db.models.student_profile import StudentProfile as _SP
     user = (
         db.query(User)
-        .options(joinedload(User.student_profile))
+        .options(joinedload(User.student_profile).joinedload(_SP.current_term))
         .filter(User.id == user_id)
         .first()
     )
@@ -54,9 +55,13 @@ def _get_user_or_404(db: Session, user_id: int) -> User:
 
 
 def _to_user_response(user: User) -> UserResponse:
+    from app.schemas.school_terms import SchoolTermResponse
     student_profile = None
     if user.student_profile:
-        student_profile = StudentProfileResponse.model_validate(user.student_profile)
+        profile_data = StudentProfileResponse.model_validate(user.student_profile)
+        if user.student_profile.current_term:
+            profile_data.current_term = SchoolTermResponse.model_validate(user.student_profile.current_term)
+        student_profile = profile_data
     return UserResponse(
         id=user.id,
         name=user.name,
@@ -201,6 +206,7 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
             user.student_profile.class_name = new_profile_payload.class_name
             user.student_profile.school_name = new_profile_payload.school_name
             user.student_profile.guardian_note = new_profile_payload.guardian_note
+            user.student_profile.birth_date = new_profile_payload.birth_date
         else:
             db.add(
                 StudentProfile(
@@ -210,6 +216,7 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
                     class_name=new_profile_payload.class_name,
                     school_name=new_profile_payload.school_name,
                     guardian_note=new_profile_payload.guardian_note,
+                    birth_date=new_profile_payload.birth_date,
                 )
             )
 

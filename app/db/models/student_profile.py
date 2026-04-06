@@ -16,8 +16,11 @@ class StudentProfile(Base):
     class_name = Column(String(50), nullable=True)
     school_name = Column(String(255), nullable=True)
     guardian_note = Column(Text, nullable=True)
+    birth_date = Column(String(7), nullable=True)  # "YYYY-MM"
+    current_term_id = Column(Integer, ForeignKey("school_terms.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
     user = relationship("User", back_populates="student_profile")
+    current_term = relationship("SchoolTerm", back_populates="student_profiles")
