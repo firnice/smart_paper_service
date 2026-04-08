@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.models import User
 from app.db.models.school_term import SchoolTerm
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.school_terms import SchoolTermListResponse, SchoolTermResponse, SetCurrentTermRequest
 from app.schemas.users import UserResponse
 from app.services import term_service
@@ -21,8 +22,10 @@ def list_school_terms(grade: Optional[str] = None, db: Session = Depends(get_db)
 
 
 @router.put("/api/users/{user_id}/term")
-def set_current_term(user_id: int, payload: SetCurrentTermRequest, db: Session = Depends(get_db)):
+def set_current_term(user_id: int, payload: SetCurrentTermRequest, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
     """设置学生的当前学期"""
+    if user_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot modify another student's term")
     user = (
         db.query(User)
         .options(joinedload(User.student_profile))

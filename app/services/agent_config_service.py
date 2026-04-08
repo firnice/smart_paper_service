@@ -6,9 +6,14 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.llm_settings import load_llm_settings, load_whatai_settings
+from app.core.llm_settings import (
+    load_builtin_provider_seed,
+    load_llm_settings,
+    load_whatai_settings,
+)
 from app.core.logger import logger
 from app.db.models.agent_config import AgentConfig
+from app.db.models.model_provider import ModelProvider
 from app.services.llm_client_service import BaseLlmClient
 
 
@@ -31,14 +36,6 @@ AGENT_DEFAULTS: dict[str, dict] = {
         "description": "分析题目推断学科、分类、错误原因",
         "model_key": "default_model",
         "temperature": 0.1,
-        "timeout_seconds": 180,
-    },
-    "diagram_crop": {
-        "provider": "whatai",
-        "display_name": "图表区域裁剪",
-        "description": "识别图片中的图表区域并裁剪",
-        "model_key": "diagram_crop_model",
-        "temperature": 0.0,
         "timeout_seconds": 180,
     },
     "diagram_svg": {
@@ -66,6 +63,8 @@ AGENT_DEFAULTS: dict[str, dict] = {
         "timeout_seconds": 180,
     },
 }
+
+BUILTIN_PROVIDER_NAMES = ("siliconflow", "whatai")
 
 
 @dataclass(frozen=True)
@@ -127,8 +126,91 @@ def serialize_fallback_models(models: Optional[list[str] | tuple[str, ...] | str
     return json.dumps(normalized, ensure_ascii=True)
 
 
-def _resolve_provider_credentials(provider: str, base_url: Optional[str], api_key_ref: Optional[str]):
+def ensure_default_model_providers(db: Optional[Session]) -> bool:
+    if not db:
+        return False
+
+    try:
+        existing_rows = {
+            row.name: row
+            for row in (
+                db.query(ModelProvider)
+                .filter(ModelProvider.name.in_(BUILTIN_PROVIDER_NAMES))
+                .all()
+            )
+        }
+    except Exception as exc:
+        logger.warning("Failed to load model providers: %s", exc)
+        return False
+
+    changed = False
+    for provider_name in BUILTIN_PROVIDER_NAMES:
+        seed = load_builtin_provider_seed(provider_name)
+        if not seed:
+            continue
+
+        row = existing_rows.get(provider_name)
+        if not row:
+            db.add(ModelProvider(
+                name=seed.name,
+                base_url=seed.base_url,
+                api_key=seed.api_key,
+                is_active=seed.is_active,
+            ))
+            changed = True
+            continue
+
+        hydrated_api_key = False
+        if (not row.base_url) and seed.base_url:
+            row.base_url = seed.base_url
+            changed = True
+        if (not row.api_key) and seed.api_key:
+            row.api_key = seed.api_key
+            hydrated_api_key = True
+            changed = True
+        if hydrated_api_key and not row.is_active:
+            row.is_active = True
+            changed = True
+
+    if changed:
+        try:
+            db.flush()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to seed default model providers: %s", exc)
+            return False
+
+    return changed
+
+
+def get_model_provider_by_name(db: Optional[Session], provider_name: str) -> Optional[ModelProvider]:
+    if not db:
+        return None
+    ensure_default_model_providers(db)
+    try:
+        return db.query(ModelProvider).filter(ModelProvider.name == provider_name).first()
+    except Exception as exc:
+        logger.warning("Failed to query model provider %s: %s", provider_name, exc)
+        return None
+
+
+def _resolve_provider_credentials(
+    db: Optional[Session],
+    provider: str,
+    base_url: Optional[str],
+    api_key_ref: Optional[str],
+):
     """从 provider 级别获取 base_url 和 api_key。"""
+    provider_name = str(api_key_ref or provider or "").strip()
+    provider_row = get_model_provider_by_name(db, provider_name) if provider_name else None
+    if provider_row:
+        if not provider_row.is_active:
+            return None, None
+        resolved_url = base_url or provider_row.base_url
+        resolved_key = provider_row.api_key
+        if resolved_url and resolved_key:
+            return resolved_url, resolved_key
+
     if provider == "siliconflow":
         settings = load_llm_settings()
         if not settings:
@@ -162,11 +244,9 @@ def _resolve_default_model(provider: str, model_key: str) -> Optional[str]:
         settings = load_whatai_settings()
         if not settings:
             return None
-        if model_key == "diagram_crop_model":
-            return settings.diagram_crop_model
         if model_key == "diagram_svg_model":
             return settings.diagram_svg_model
-        return settings.diagram_crop_model
+        return settings.diagram_svg_model
 
     return None
 
@@ -187,7 +267,7 @@ def get_agent_config(db: Optional[Session], node_name: str) -> Optional[Resolved
 
     if db_config:
         resolved_url, resolved_key = _resolve_provider_credentials(
-            db_config.provider, db_config.base_url, db_config.api_key_ref
+            db, db_config.provider, db_config.base_url, db_config.api_key_ref
         )
         if not resolved_url or not resolved_key:
             logger.warning("Agent %s: provider %s credentials not available", node_name, db_config.provider)
@@ -224,7 +304,7 @@ def get_agent_config(db: Optional[Session], node_name: str) -> Optional[Resolved
         logger.warning("Agent %s: no model available for provider %s", node_name, provider)
         return None
 
-    resolved_url, resolved_key = _resolve_provider_credentials(provider, None, None)
+    resolved_url, resolved_key = _resolve_provider_credentials(db, provider, None, None)
     if not resolved_url or not resolved_key:
         logger.warning("Agent %s: provider %s credentials not available", node_name, provider)
         return None

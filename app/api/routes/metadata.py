@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import ErrorReason, Subject, WrongQuestionCategory
 from app.db.session import get_db
+from app.core.admin_auth import get_admin_session
 from app.schemas.metadata import (
     ErrorReasonCreate,
     ErrorReasonListResponse,
@@ -40,7 +41,7 @@ def list_subjects(
 
 
 @router.post("/api/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
-def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
+def create_subject(payload: SubjectCreate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     subject = Subject(code=payload.code.strip(), name=payload.name.strip(), is_active=payload.is_active)
     db.add(subject)
     try:
@@ -72,7 +73,7 @@ def list_wrong_question_categories(
     response_model=WrongQuestionCategoryResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_wrong_question_category(payload: WrongQuestionCategoryCreate, db: Session = Depends(get_db)):
+def create_wrong_question_category(payload: WrongQuestionCategoryCreate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     category = WrongQuestionCategory(name=payload.name.strip(), description=payload.description)
     db.add(category)
     try:
@@ -103,7 +104,7 @@ def list_error_reasons(
 
 
 @router.post("/api/error-reasons", response_model=ErrorReasonResponse, status_code=status.HTTP_201_CREATED)
-def create_error_reason(payload: ErrorReasonCreate, db: Session = Depends(get_db)):
+def create_error_reason(payload: ErrorReasonCreate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     if payload.category_id is not None:
         category = (
             db.query(WrongQuestionCategory)

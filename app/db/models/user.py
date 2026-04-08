@@ -41,6 +41,7 @@ class User(Base):
         "WrongQuestion",
         foreign_keys="WrongQuestion.student_id",
         back_populates="student",
+        cascade="all, delete-orphan",
     )
     created_wrong_questions = relationship(
         "WrongQuestion",
@@ -51,4 +52,5 @@ class User(Base):
         "StudyRecord",
         foreign_keys="StudyRecord.student_id",
         back_populates="student",
+        cascade="all, delete-orphan",
     )

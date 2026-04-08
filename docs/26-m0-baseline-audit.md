@@ -18,7 +18,7 @@
 
 - `./start_service.sh dev` 可启动服务
 - `alembic upgrade head` 可执行
-- Swagger 可访问：`http://127.0.0.1:8000/docs`
+- Swagger 可访问：`http://127.0.0.1:8100/docs`
 - 健康检查可访问：`GET /api/health`
 
 ## 审计范围
@@ -87,12 +87,12 @@
 
 默认端口：
 
-- `8000`
+- `8100`
 
 可访问地址：
 
-- Swagger：`http://127.0.0.1:8000/docs`
-- Health：`http://127.0.0.1:8000/api/health`
+- Swagger：`http://127.0.0.1:8100/docs`
+- Health：`http://127.0.0.1:8100/api/health`
 
 ## 当前基线判断
 

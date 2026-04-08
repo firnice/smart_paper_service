@@ -5,6 +5,7 @@ from app.db.models import User
 from app.db.models.export import Export
 from app.db.models.student_profile import StudentProfile
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.export import (
     ExportRequest,
     ExportResponse,
@@ -18,7 +19,7 @@ router = APIRouter()
 
 
 @router.post("/api/export", response_model=ExportResponse)
-def create_export_task(payload: ExportRequest, db: Session = Depends(get_db)):
+def create_export_task(payload: ExportRequest, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     """
     创建导出任务（同步生成 PDF）
 
@@ -58,7 +59,7 @@ def create_export_task(payload: ExportRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/api/export/{job_id}", response_model=ExportResponse)
-def get_export_status(job_id: str, db: Session = Depends(get_db)):
+def get_export_status(job_id: str, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     export_record = db.query(Export).filter(Export.job_id == job_id).first()
 
     if not export_record:
@@ -72,7 +73,7 @@ def get_export_status(job_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/api/print-pack/export", response_model=PrintPackExportResponse)
-def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depends(get_db)):
+def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     response = export_service.create_print_pack_export(
         title=payload.title,
         paper_meta=payload.paper_meta,

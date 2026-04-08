@@ -20,6 +20,7 @@ from app.db.models import (
     WrongQuestionErrorReason,
 )
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.school_terms import SchoolTermResponse
 from app.schemas.wrong_questions import (
     CategoryBrief,
@@ -213,7 +214,9 @@ def _ensure_reason_category_consistency(
 
 
 @router.post("/api/wrong-questions", response_model=WrongQuestionResponse, status_code=status.HTTP_201_CREATED)
-def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(get_db)):
+def create_wrong_question(payload: WrongQuestionCreate, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
+    if payload.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot create wrong questions for another student")
     student = _get_user_or_404(db, payload.student_id)
     _validate_student_user(student)
     _validate_status(payload.status)
@@ -326,10 +329,14 @@ def list_wrong_questions(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     status_value = _resolve_param_value(status_value, None)
     offset = _resolve_param_value(offset, 0)
     limit = _resolve_param_value(limit, 20)
+
+    # 强制只能查自己的错题
+    student_id = current_student_id
 
     query = db.query(WrongQuestion)
     if error_reason_id is not None:
@@ -359,12 +366,13 @@ def list_wrong_questions(
     if is_bookmarked is not None:
         query = query.filter(WrongQuestion.is_bookmarked.is_(is_bookmarked))
     if keyword:
-        like_pattern = f"%{keyword}%"
+        safe_keyword = keyword.strip()[:100].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = f"%{safe_keyword}%"
         query = query.filter(
             or_(
-                WrongQuestion.title.like(like_pattern),
-                WrongQuestion.content.like(like_pattern),
-                WrongQuestion.notes.like(like_pattern),
+                WrongQuestion.title.like(like_pattern, escape="\\"),
+                WrongQuestion.content.like(like_pattern, escape="\\"),
+                WrongQuestion.notes.like(like_pattern, escape="\\"),
             )
         )
     if term_id is not None:
@@ -384,13 +392,18 @@ def list_wrong_questions(
 
 
 @router.get("/api/wrong-questions/{wrong_question_id}", response_model=WrongQuestionResponse)
-def get_wrong_question(wrong_question_id: int, db: Session = Depends(get_db)):
-    return _serialize_wrong_question(_get_wrong_question_or_404(db, wrong_question_id))
+def get_wrong_question(wrong_question_id: int, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
+    item = _get_wrong_question_or_404(db, wrong_question_id)
+    if item.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return _serialize_wrong_question(item)
 
 
 @router.put("/api/wrong-questions/{wrong_question_id}", response_model=WrongQuestionResponse)
-def update_wrong_question(wrong_question_id: int, payload: WrongQuestionUpdate, db: Session = Depends(get_db)):
+def update_wrong_question(wrong_question_id: int, payload: WrongQuestionUpdate, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
     wrong_question = _get_wrong_question_or_404(db, wrong_question_id)
+    if wrong_question.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     update_data = payload.model_dump(exclude_unset=True)
     has_reason_update = "error_reason_ids" in payload.model_fields_set
 
@@ -450,10 +463,12 @@ def update_wrong_question(wrong_question_id: int, payload: WrongQuestionUpdate, 
 
 
 @router.delete("/api/wrong-questions/{wrong_question_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_wrong_question(wrong_question_id: int, db: Session = Depends(get_db)):
+def delete_wrong_question(wrong_question_id: int, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
     wrong_question = db.query(WrongQuestion).filter(WrongQuestion.id == wrong_question_id).first()
     if not wrong_question:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wrong question not found")
+    if wrong_question.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     db.delete(wrong_question)
     db.commit()
 
@@ -467,8 +482,11 @@ def create_study_record(
     wrong_question_id: int,
     payload: StudyRecordCreate,
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     wrong_question = _get_wrong_question_or_404(db, wrong_question_id)
+    if wrong_question.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     if payload.result not in VALID_STUDY_RESULT:
         raise HTTPException(
@@ -526,11 +544,14 @@ def list_study_records(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     offset = _resolve_param_value(offset, 0)
     limit = _resolve_param_value(limit, 20)
 
-    _get_wrong_question_or_404(db, wrong_question_id)
+    item = _get_wrong_question_or_404(db, wrong_question_id)
+    if item.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     query = db.query(StudyRecord).filter(StudyRecord.wrong_question_id == wrong_question_id)
     total = query.count()

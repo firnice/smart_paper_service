@@ -14,9 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import logger
+from app.core.student_auth import get_student_session
 from app.schemas.ocr import (
-    DiagramCropGenerateRequest,
-    DiagramCropGenerateResponse,
     DiagramSvgGenerateRequest,
     DiagramSvgGenerateResponse,
     OcrExtractResponse,
@@ -36,6 +35,17 @@ from app.services.image_service import prepare_image_for_ocr_pipeline
 from app.services.storage_service import get_storage_service
 
 router = APIRouter()
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp"}
+
+
+def _validate_upload(file: UploadFile, image_bytes: bytes) -> None:
+    if len(image_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 50 MB.")
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type and content_type not in _ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{content_type}'. Allowed: image/jpeg, image/png, image/webp.")
 
 
 def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
@@ -61,6 +71,8 @@ def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
         raise HTTPException(status_code=400, detail="Only local static asset urls are supported.")
 
     relative_path = path[len("/static/"):].lstrip("/")
+    if ".." in relative_path.split("/") or not relative_path or relative_path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid asset path.")
     storage_root = Path(settings.storage_base_dir).resolve()
     file_path = (storage_root / relative_path).resolve()
     try:
@@ -82,7 +94,8 @@ def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
 async def extract_questions(
     file: UploadFile = File(...),
     prompt: Optional[str] = Form(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: int = Depends(get_student_session),
 ):
     """
     题目提取（完整流程，接口保持不变，内部使用多模态 LLM）
@@ -103,6 +116,7 @@ async def extract_questions(
         image_bytes = await file.read()
         if not image_bytes:
             raise HTTPException(status_code=400, detail="Empty upload.")
+        _validate_upload(file, image_bytes)
 
         logger.info(
             "OCR upload received filename=%s bytes=%d content_type=%s custom_prompt=%s",
@@ -255,6 +269,7 @@ async def extract_questions(
 async def extract_questions_simple(
     file: UploadFile = File(...),
     prompt: Optional[str] = Form(default=None),
+    _: int = Depends(get_student_session),
 ):
     """
     题目提取（简单版本，不入库）
@@ -267,6 +282,7 @@ async def extract_questions_simple(
         image_bytes = await file.read()
         if not image_bytes:
             raise HTTPException(status_code=400, detail="Empty upload.")
+        _validate_upload(file, image_bytes)
 
         logger.info(
             "OCR simple upload: filename=%s bytes=%d custom_prompt=%s",
@@ -312,34 +328,8 @@ async def extract_questions_simple(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.post("/api/ocr/diagram/crop", response_model=DiagramCropGenerateResponse)
-async def generate_diagram_crop(payload: DiagramCropGenerateRequest, db: Session = Depends(get_db)):
-    if not settings.enable_whatai_diagram_crop:
-        return DiagramCropGenerateResponse()
-
-    question_image_bytes, content_type = _load_asset_bytes(payload.question_image_url)
-    result = diagram_llm_service.generate_diagram_crop(
-        question_image_bytes,
-        question_text=payload.question_text,
-        content_type=content_type,
-        trace_id=f"diagram-crop:item:{payload.item_id or 'unknown'}",
-        db=db,
-    )
-    if not result:
-        return DiagramCropGenerateResponse()
-
-    storage = get_storage_service()
-    diagram_llm_image_url = storage.upload_question_asset(
-        result.image_bytes,
-        payload.item_id or 0,
-        90,
-        suffix=".png",
-    )
-    return DiagramCropGenerateResponse(diagram_llm_image_url=diagram_llm_image_url)
-
-
 @router.post("/api/ocr/diagram/svg", response_model=DiagramSvgGenerateResponse)
-async def generate_diagram_svg(payload: DiagramSvgGenerateRequest, db: Session = Depends(get_db)):
+async def generate_diagram_svg(payload: DiagramSvgGenerateRequest, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     if not settings.enable_whatai_diagram_svg:
         return DiagramSvgGenerateResponse()
 
@@ -383,7 +373,7 @@ async def generate_diagram_svg(payload: DiagramSvgGenerateRequest, db: Session =
 
 
 @router.post("/api/ocr/analyze-question", response_model=QuestionAnalyzeResponse)
-async def analyze_question(payload: QuestionAnalyzeRequest, db: Session = Depends(get_db)):
+async def analyze_question(payload: QuestionAnalyzeRequest, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     """
     分析题目内容，智能推断学科、错题分类、错误原因和标题。
 

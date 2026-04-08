@@ -142,8 +142,8 @@
 
 ## Swagger 与运行信息
 
-- Swagger：`http://127.0.0.1:8000/docs`
-- Health：`http://127.0.0.1:8000/api/health`
+- Swagger：`http://127.0.0.1:8100/docs`
+- Health：`http://127.0.0.1:8100/api/health`
 
 ## 建议的下一阶段
 

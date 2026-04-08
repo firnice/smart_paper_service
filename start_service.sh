@@ -28,7 +28,7 @@ for arg in "$@"; do
 done
 
 # ── 基础配置 ────────────────────────────────────────────
-PORT="${PORT:-8000}"
+PORT="${PORT:-8100}"
 APP_MODULE="${APP_MODULE:-app.main:app}"
 UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"

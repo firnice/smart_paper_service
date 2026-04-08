@@ -10,6 +10,7 @@ from app.core.logger import logger
 from app.db.models.trend_analysis import TrendAnalysis
 from app.db.models.user import User
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.analysis import (
     TrendAnalysisCreateResponse,
     TrendAnalysisRequest,
@@ -63,8 +64,11 @@ def create_trend_analysis(
     payload: TrendAnalysisRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     """发起趋势分析（异步后台执行）。"""
+    if payload.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     _validate_student(db, payload.student_id)
 
     analysis = TrendAnalysis(
@@ -88,8 +92,8 @@ def create_trend_analysis(
 
 @router.get("/api/analysis/trend/latest", response_model=Optional[TrendAnalysisResponse])
 def get_latest_trend_analysis(
-    student_id: int = Query(...),
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     """查询学生最新已完成的趋势分析。"""
     _validate_student(db, student_id)
@@ -114,20 +118,23 @@ def get_latest_trend_analysis(
 def get_trend_analysis(
     analysis_id: int,
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     """查询特定分析结果。"""
     analysis = db.query(TrendAnalysis).filter(TrendAnalysis.id == analysis_id).first()
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.student_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return _to_response(analysis)
 
 
 @router.get("/api/analysis/trend", response_model=List[TrendAnalysisResponse])
 def list_trend_analyses(
-    student_id: int = Query(...),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     """列出学生的历史分析报告。"""
     _validate_student(db, student_id)

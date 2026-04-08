@@ -7,6 +7,7 @@ from app.core.logger import logger
 from app.db.models.wrong_question import WrongQuestion
 from app.db.models.subject import Subject
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.variants import (
     VariantItemResponse,
     VariantSourceQuestionResponse,
@@ -21,7 +22,7 @@ router = APIRouter()
 
 
 @router.post("/api/variants/generate", response_model=VariantsResponse)
-def generate_variants(payload: VariantsRequest, db: Session = Depends(get_db)):
+def generate_variants(payload: VariantsRequest, db: Session = Depends(get_db), _: int = Depends(get_student_session)):
     try:
         items = variant_service.generate_variants(
             payload.source_text,
@@ -40,11 +41,14 @@ def generate_variants(payload: VariantsRequest, db: Session = Depends(get_db)):
 def generate_variants_for_question(
     payload: VariantsForQuestionRequest,
     db: Session = Depends(get_db),
+    current_student_id: int = Depends(get_student_session),
 ):
     # 从 wrong_questions 表获取题目信息
     wq = db.query(WrongQuestion).filter(WrongQuestion.id == payload.wrong_question_id).first()
     if not wq:
         raise HTTPException(status_code=404, detail="Wrong question not found")
+    if wq.student_id != current_student_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # 获取学科名称
     subject_name = None

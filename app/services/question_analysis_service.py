@@ -8,30 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logger import logger
 from app.services.agent_config_service import get_llm_client_for_agent
-from app.services.llm_client_service import (
-    LlmClientError,
-    get_siliconflow_client,
-)
-
-_SYSTEM_PROMPT = (
-    "你是一个小学/初中错题分析助手。根据题目内容，推断学科、错题分类和可能的错误原因。"
-    "仅返回严格 JSON，不要输出任何其他内容。"
-)
-
-_USER_PROMPT_TEMPLATE = """\
-学生年级：{grade}
-
-题目内容：
-{question_text}
-
-请根据题目内容分析并返回 JSON，包含以下字段：
-- subject: 学科，只能是以下之一：数学、语文、英语、科学
-- category: 错题分类，只能是以下之一：概念不清、计算失误、审题错误、步骤缺失、知识点混淆
-- error_reason: 最可能的错误原因，只能是以下之一：公式记忆错误、概念边界不清、进位借位出错、抄写数字错误、漏看条件、单位忽略、过程跳步、校验缺失、题型混淆、方法选择不当
-- title: 为这道错题起一个简短的标题（不超过15个字），概括题目考查的知识点
-
-示例返回：
-{{"subject": "数学", "category": "计算失误", "error_reason": "进位借位出错", "title": "两位数加法进位"}}"""
+from app.services.llm_client_service import LlmClientError
 
 
 def _strip_code_fence(text: str) -> str:
@@ -79,25 +56,24 @@ def analyze_question(
     if not question_text or not question_text.strip():
         return None
 
-    # 优先使用 agent 配置
-    agent_result = get_llm_client_for_agent(db, "question_analyze") if db else None
-    if agent_result:
-        llm_client, agent_config = agent_result
-        model = agent_config.model
-        system_prompt = agent_config.system_prompt or _SYSTEM_PROMPT
-        user_template = agent_config.user_prompt_template or _USER_PROMPT_TEMPLATE
-        temperature = agent_config.temperature
-    else:
-        # 回退到旧方式
-        client = get_siliconflow_client()
-        if not client or not client.default_model:
-            logger.warning("No siliconflow client available for question analysis")
-            return None
-        llm_client = client.base_client
-        model = client.default_model
-        system_prompt = _SYSTEM_PROMPT
-        user_template = _USER_PROMPT_TEMPLATE
-        temperature = 0.1
+    if db is None:
+        logger.warning("analyze_question requires a db session")
+        return None
+
+    agent_result = get_llm_client_for_agent(db, "question_analyze")
+    if not agent_result:
+        logger.warning("question_analyze agent unavailable")
+        return None
+
+    llm_client, agent_config = agent_result
+    model = agent_config.model
+    system_prompt = (agent_config.system_prompt or "").strip()
+    user_template = (agent_config.user_prompt_template or "").strip()
+    temperature = agent_config.temperature
+
+    if not system_prompt or not user_template:
+        logger.warning("question_analyze agent is missing prompts in database")
+        return None
 
     grade_display = grade or "未知"
     user_prompt = user_template.format(

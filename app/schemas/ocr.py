@@ -74,16 +74,6 @@ class OcrExtractResponseV2(BaseModel):
     pipeline_metrics: Optional[OcrPipelineMetrics] = None
 
 
-class DiagramCropGenerateRequest(BaseModel):
-    question_image_url: str
-    question_text: str = ""
-    item_id: int = 0
-
-
-class DiagramCropGenerateResponse(BaseModel):
-    diagram_llm_image_url: Optional[str] = None
-
-
 class DiagramSvgGenerateRequest(BaseModel):
     question_text: str
     question_image_url: Optional[str] = None

@@ -10,27 +10,9 @@ from sqlalchemy.orm import Session
 from app.core.logger import logger
 from app.services.agent_config_service import get_llm_client_for_agent
 from app.services.diagram_llm_service import generate_diagram_svg
-from app.services.llm_client_service import LlmClientError, get_siliconflow_client
+from app.services.llm_client_service import LlmClientError
 from app.services.storage_service import get_storage_service
 
-
-# ---------------------------------------------------------------------------
-# 旧版英文 prompt（保持向后兼容）
-# ---------------------------------------------------------------------------
-SYSTEM_PROMPT = (
-    "You are a primary school math tutor. "
-    "Generate variants with the same logic but different numbers or scenarios. "
-    "Return ONLY a JSON array of strings."
-)
-
-# ---------------------------------------------------------------------------
-# 新版中文 prompt 模板（举一反三增强版）
-# ---------------------------------------------------------------------------
-SYSTEM_PROMPT_CN_TEMPLATE = (
-    "你是一位经验丰富的小学{subject}老师。请根据原题出{count}道类似但数字或情境不同的练习题。\n"
-    "每道题要有参考答案和一句简短的解题提示。\n"
-    '仅返回严格 JSON 数组，格式: [{{"text":"题目","answer":"答案","hint":"提示"}}]'
-)
 CUSTOM_PROMPT_PREFIX = "补充要求："
 
 
@@ -148,27 +130,20 @@ def _request_variant_items(
 # ---------------------------------------------------------------------------
 
 
-def _get_client_and_model(db: Optional[Session] = None):
-    """
-    优先使用 agent 配置获取客户端，回退到旧的 get_siliconflow_client()。
-    返回 (base_client, model, temperature)。
-    """
-    # 优先: agent 配置
-    if db is not None:
-        result = get_llm_client_for_agent(db, "question_generate")
-        if result:
-            client, config = result
-            logger.info(
-                "variant_service: using agent config (provider=%s, model=%s)",
-                config.provider, config.model,
-            )
-            return client, config.model, config.temperature
-
-    # 回退: 旧的硬编码方式
-    sf_client = get_siliconflow_client()
-    if not sf_client or not sf_client.default_model:
-        raise RuntimeError("SILICONFLOW config missing. Please set SILICONFLOW_MODEL.")
-    return sf_client.base_client, sf_client.default_model, 0.7
+def _get_client_and_config(db: Optional[Session]):
+    """从 DB agent 配置获取客户端。"""
+    if db is None:
+        raise RuntimeError("variant_service requires a db session")
+    result = get_llm_client_for_agent(db, "question_generate")
+    if not result:
+        raise RuntimeError("question_generate agent unavailable")
+    client, config = result
+    system_prompt = (config.system_prompt or "").strip()
+    user_template = (config.user_prompt_template or "").strip()
+    if not system_prompt or not user_template:
+        raise RuntimeError("question_generate agent is missing prompts in database")
+    logger.info("variant_service: using agent config provider=%s model=%s", config.provider, config.model)
+    return client, config
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +158,9 @@ def generate_variants(
     subject: Optional[str] = None,
     db: Optional[Session] = None,
 ) -> list[str]:
-    """Generate same-type variants via LLM (agent config or SiliconFlow fallback)."""
-    base_client, model, temperature = _get_client_and_model(db)
+    """Generate same-type variants via LLM."""
+    base_client, config = _get_client_and_config(db)
+    system_prompt = config.system_prompt.format(subject=subject or "数学", count=count)
 
     user_prompt = f"Source question: {source_text}\n"
     if grade:
@@ -194,12 +170,12 @@ def generate_variants(
     user_prompt += f"Return {count} variants."
 
     payload = {
-        "model": model,
+        "model": config.model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": temperature,
+        "temperature": config.temperature,
     }
     try:
         body = base_client.chat_completions(
@@ -238,10 +214,11 @@ def generate_variants_for_question(
     """
     增强版举一反三：生成结构化的练习题（包含题目、答案、提示）。
     """
-    base_client, model, temperature = _get_client_and_model(db)
-
+    base_client, config = _get_client_and_config(db)
+    model = config.model
+    temperature = config.temperature
     subject_name = subject or "数学"
-    system_prompt = SYSTEM_PROMPT_CN_TEMPLATE.format(subject=subject_name, count=count)
+    system_prompt = config.system_prompt.format(subject=subject_name, count=count)
 
     # 尝试读取 svg 内容（source_svg 可能是 URL 或内联 svg 字符串）
     source_svg_content: Optional[str] = None
@@ -303,7 +280,7 @@ def generate_variants_for_question(
         attempts += 1
         remaining = count - len(items)
         existing_texts = "\n".join(f"- {item.text}" for item in items if item.text.strip())
-        retry_system_prompt = SYSTEM_PROMPT_CN_TEMPLATE.format(subject=subject_name, count=remaining)
+        retry_system_prompt = config.system_prompt.format(subject=subject_name, count=remaining)
         retry_user_prompt = (
             f"原题：{source_text}\n"
             f"已经生成了{len(items)}道题，但还缺{remaining}道。\n"

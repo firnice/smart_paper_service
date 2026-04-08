@@ -104,7 +104,7 @@ _________________________
 
 ### API 调用
 ```bash
-curl -X POST http://localhost:8000/api/export \
+curl -X POST http://localhost:8100/api/export \
   -H "Content-Type: application/json" \
   -d '{
     "title": "小学数学练习卷",

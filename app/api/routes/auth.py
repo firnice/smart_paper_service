@@ -1,14 +1,19 @@
-from uuid import uuid4
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from app.core.rate_limit import limiter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import StudentProfile, User
 from app.db.session import get_db
 from app.core.config import settings
+from app.core.admin_auth import create_admin_token, load_admin_credentials
+from app.core.student_auth import create_student_token
+from app.core.llm_secrets import PRESET_STUDENT_ACCOUNTS
 from app.schemas.auth import (
+    AdminLoginRequest,
+    AdminLoginResponse,
     StudentLoginConfigResponse,
     StudentLoginPresetAccount,
     StudentLoginRequest,
@@ -18,33 +23,6 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
-
-PRESET_STUDENT_ACCOUNTS = {
-    "test1": {
-        "password": "test1",
-        "name": "测试学生1",
-        "student_no": "TEST001",
-        "grade": "三年级",
-        "class_name": "1班",
-        "school_name": "实验小学",
-    },
-    "test2": {
-        "password": "test2",
-        "name": "测试学生2",
-        "student_no": "TEST002",
-        "grade": "四年级",
-        "class_name": "2班",
-        "school_name": "实验小学",
-    },
-    "test3": {
-        "password": "test3",
-        "name": "测试学生3",
-        "student_no": "TEST003",
-        "grade": "五年级",
-        "class_name": "1班",
-        "school_name": "实验小学",
-    },
-}
 
 
 def _build_login_config() -> StudentLoginConfigResponse:
@@ -90,7 +68,7 @@ def _to_login_response(student: User, message: str, created: bool = False) -> St
         success=True,
         message=message,
         created=created,
-        session_token=str(uuid4()),
+        session_token=create_student_token(student.id),
         student=StudentLoginStudent(
             id=student.id,
             name=student.name,
@@ -170,7 +148,8 @@ def student_login_config():
 
 
 @router.post("/api/auth/student-login", response_model=StudentLoginResponse)
-def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def student_login(request: Request, payload: StudentLoginRequest, db: Session = Depends(get_db)):
     account = payload.account.strip().lower()
     password = payload.password.strip()
     if not account or not password:
@@ -206,3 +185,18 @@ def student_login(payload: StudentLoginRequest, db: Session = Depends(get_db)):
         created = True
 
     return _to_login_response(student, message="Student login verified", created=created)
+
+
+@router.post("/api/auth/admin-login", response_model=AdminLoginResponse)
+@limiter.limit("5/minute")
+def admin_login(request: Request, payload: AdminLoginRequest):
+    expected_username, expected_password = load_admin_credentials()
+    if not expected_username or not expected_password:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin credentials not configured",
+        )
+    if payload.username.strip().lower() != expected_username.lower() or payload.password.strip() != expected_password:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+    token = create_admin_token()
+    return AdminLoginResponse(success=True, session_token=token, role="admin")

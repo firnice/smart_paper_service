@@ -1,10 +1,16 @@
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from app.core.rate_limit import limiter
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app.api.openapi import OPENAPI_DESCRIPTION, OPENAPI_TAGS, apply_openapi_metadata
@@ -12,7 +18,24 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.trace import REQUEST_ID_HEADER_NAME, TRACE_HEADER_NAME, reset_trace_id, resolve_trace_id, set_trace_id
+from app.db.session import SessionLocal
 from app.schemas.common import ServiceInfoResponse
+from app.services.agent_config_service import ensure_default_model_providers
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    db = SessionLocal()
+    try:
+        if ensure_default_model_providers(db):
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to seed built-in model providers on startup")
+    finally:
+        db.close()
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -23,14 +46,31 @@ app = FastAPI(
     openapi_url="/openapi.json",
     openapi_tags=OPENAPI_TAGS,
     swagger_ui_parameters={"displayRequestDuration": True},
+    lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["content-type", "x-admin-token", "x-trace-id", "x-request-id"],
 )
 
 app.include_router(api_router)

@@ -46,3 +46,14 @@ class StudentLoginConfigResponse(BaseModel):
     subtitle: str
     help_text: str
     preset_accounts: List[StudentLoginPresetAccount] = Field(default_factory=list)
+
+
+class AdminLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class AdminLoginResponse(BaseModel):
+    success: bool
+    session_token: str
+    role: str

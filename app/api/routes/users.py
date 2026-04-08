@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import ParentStudentLink, StudentProfile, User
 from app.db.session import get_db
+from app.core.admin_auth import get_admin_session
+from app.core.student_auth import get_student_session
 from app.schemas.users import (
     ParentStudentLinkCreate,
     ParentStudentLinkResponse,
@@ -76,7 +78,7 @@ def _to_user_response(user: User) -> UserResponse:
 
 
 @router.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(payload: UserCreate, db: Session = Depends(get_db)):
+def create_user(payload: UserCreate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     _validate_role(payload.role)
     _validate_status(payload.status)
 
@@ -132,6 +134,7 @@ def list_users(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
+    _: str = Depends(get_admin_session),
 ):
     query = db.query(User).options(joinedload(User.student_profile))
 
@@ -142,12 +145,13 @@ def list_users(
         _validate_status(user_status)
         query = query.filter(User.status == user_status)
     if keyword:
-        like_pattern = f"%{keyword}%"
+        safe_keyword = keyword.strip()[:100].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = f"%{safe_keyword}%"
         query = query.filter(
             or_(
-                User.name.like(like_pattern),
-                User.email.like(like_pattern),
-                User.phone.like(like_pattern),
+                User.name.like(like_pattern, escape="\\"),
+                User.email.like(like_pattern, escape="\\"),
+                User.phone.like(like_pattern, escape="\\"),
             )
         )
 
@@ -157,12 +161,14 @@ def list_users(
 
 
 @router.get("/api/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(user_id: int, db: Session = Depends(get_db), current_student_id: int = Depends(get_student_session)):
+    if user_id != current_student_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return _to_user_response(_get_user_or_404(db, user_id))
 
 
 @router.put("/api/users/{user_id}", response_model=UserResponse)
-def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)):
+def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     user = _get_user_or_404(db, user_id)
 
     update_data = payload.model_dump(exclude_unset=True)
@@ -238,7 +244,7 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     response_model=ParentStudentLinkResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_parent_student_link(payload: ParentStudentLinkCreate, db: Session = Depends(get_db)):
+def create_parent_student_link(payload: ParentStudentLinkCreate, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     if payload.parent_id == payload.student_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -273,7 +279,7 @@ def create_parent_student_link(payload: ParentStudentLinkCreate, db: Session = D
 
 
 @router.delete("/api/users/parent-student-links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_parent_student_link(link_id: int, db: Session = Depends(get_db)):
+def delete_parent_student_link(link_id: int, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     link = db.query(ParentStudentLink).filter(ParentStudentLink.id == link_id).first()
     if not link:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent-student link not found")
@@ -282,7 +288,7 @@ def delete_parent_student_link(link_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/api/users/{parent_id}/students", response_model=List[StudentWithLink])
-def list_students_by_parent(parent_id: int, db: Session = Depends(get_db)):
+def list_students_by_parent(parent_id: int, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     parent = _get_user_or_404(db, parent_id)
     if parent.role != "parent":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is not a parent")
@@ -305,8 +311,15 @@ def list_students_by_parent(parent_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@router.delete("/api/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
+    user = _get_user_or_404(db, user_id)
+    db.delete(user)
+    db.commit()
+
+
 @router.get("/api/users/{student_id}/parents", response_model=List[ParentWithLink])
-def list_parents_by_student(student_id: int, db: Session = Depends(get_db)):
+def list_parents_by_student(student_id: int, db: Session = Depends(get_db), _: str = Depends(get_admin_session)):
     student = _get_user_or_404(db, student_id)
     if student.role != "student":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is not a student")

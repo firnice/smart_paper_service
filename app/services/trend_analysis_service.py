@@ -17,27 +17,13 @@ from app.db.models.wrong_question import WrongQuestion
 from app.db.models.wrong_question_error_reason import WrongQuestionErrorReason
 from app.db.session import SessionLocal
 from app.services.agent_config_service import get_llm_client_for_agent
-from app.services.llm_client_service import LlmClientError, get_siliconflow_client
+from app.services.llm_client_service import LlmClientError
 
 
 # ---------------------------------------------------------------------------
 # LLM Prompt
 # ---------------------------------------------------------------------------
 
-TREND_SYSTEM_PROMPT = (
-    "你是一位经验丰富的小学教育专家，擅长通过数据分析学生的学习情况。\n"
-    "请根据提供的学生错题统计数据，生成一份简洁的学习趋势分析报告。\n"
-    "仅返回严格 JSON，格式如下：\n"
-    "{\n"
-    '  "summary": "整体概述（1-2句话）",\n'
-    '  "strengths": ["优势1", "优势2"],\n'
-    '  "weaknesses": ["薄弱点1", "薄弱点2"],\n'
-    '  "suggestions": ["建议1", "建议2", "建议3"],\n'
-    '  "trend_description": "学习趋势描述（正在进步/退步/持平）",\n'
-    '  "risk_subjects": ["需要重点关注的学科"],\n'
-    '  "score": 0-100\n'
-    "}"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -299,27 +285,21 @@ def _execute_analysis(db: Session, analysis_id: int) -> None:
 
         # 3. 获取 LLM 客户端
         result = get_llm_client_for_agent(db, "trend_analyze")
-        if result:
-            client, config = result
-            model = config.model
-            temperature = config.temperature
-        else:
-            # 回退到 siliconflow
-            sf_client = get_siliconflow_client()
-            if not sf_client or not sf_client.default_model:
-                raise RuntimeError("No LLM client available for trend analysis")
-            client = sf_client.base_client
-            model = sf_client.default_model
-            temperature = 0.3
+        if not result:
+            raise RuntimeError("trend_analyze agent unavailable")
+        client, config = result
+        system_prompt = (config.system_prompt or "").strip()
+        if not system_prompt:
+            raise RuntimeError("trend_analyze agent is missing system_prompt in database")
 
         # 4. 调用 LLM
         payload = {
-            "model": model,
+            "model": config.model,
             "messages": [
-                {"role": "system", "content": TREND_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": temperature,
+            "temperature": config.temperature,
         }
 
         body = client.chat_completions(payload, trace_id="trend_analysis")

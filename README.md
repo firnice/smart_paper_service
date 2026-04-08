@@ -108,10 +108,10 @@ alembic upgrade head
 ./start_service.sh dev
 ```
 
-- Swagger: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
-- 健康检查: `http://localhost:8000/api/health`
+- Swagger: `http://localhost:8100/docs`
+- ReDoc: `http://localhost:8100/redoc`
+- OpenAPI JSON: `http://localhost:8100/openapi.json`
+- 健康检查: `http://localhost:8100/api/health`
 
 ### 5) 冒烟测试与示例脚本
 
@@ -127,13 +127,13 @@ alembic upgrade head
 ### 1) 创建家长与学生
 
 ```bash
-curl -X POST http://localhost:8000/api/users \
+curl -X POST http://localhost:8100/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"张妈妈","role":"parent","status":"active"}'
 ```
 
 ```bash
-curl -X POST http://localhost:8000/api/users \
+curl -X POST http://localhost:8100/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "name":"张小明",
@@ -146,7 +146,7 @@ curl -X POST http://localhost:8000/api/users \
 ### 2) 绑定家长与学生
 
 ```bash
-curl -X POST http://localhost:8000/api/users/parent-student-links \
+curl -X POST http://localhost:8100/api/users/parent-student-links \
   -H "Content-Type: application/json" \
   -d '{"parent_id":1,"student_id":2,"relation_type":"mother"}'
 ```
@@ -154,7 +154,7 @@ curl -X POST http://localhost:8000/api/users/parent-student-links \
 ### 2.1) 学生登录校验（简版）
 
 ```bash
-curl -X POST http://localhost:8000/api/auth/student-login \
+curl -X POST http://localhost:8100/api/auth/student-login \
   -H "Content-Type: application/json" \
   -d '{"name":"张小明","student_no":"S-1001","grade":"三年级"}'
 ```
@@ -162,7 +162,7 @@ curl -X POST http://localhost:8000/api/auth/student-login \
 ### 3) 新增错题（含分类与错误原因）
 
 ```bash
-curl -X POST http://localhost:8000/api/wrong-questions \
+curl -X POST http://localhost:8100/api/wrong-questions \
   -H "Content-Type: application/json" \
   -d '{
     "student_id":2,
@@ -180,13 +180,13 @@ curl -X POST http://localhost:8000/api/wrong-questions \
 ### 4) 新增练习记录并查看统计
 
 ```bash
-curl -X POST http://localhost:8000/api/wrong-questions/1/study-records \
+curl -X POST http://localhost:8100/api/wrong-questions/1/study-records \
   -H "Content-Type: application/json" \
   -d '{"result":"incorrect","mastery_level":2,"time_spent_seconds":180}'
 ```
 
 ```bash
-curl "http://localhost:8000/api/statistics/overview?student_id=2"
+curl "http://localhost:8100/api/statistics/overview?student_id=2"
 ```
 
 ## 目录结构

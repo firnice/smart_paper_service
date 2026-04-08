@@ -81,10 +81,6 @@ OPERATION_METADATA: dict[tuple[str, str], dict[str, str]] = {
         "summary": "Extract Questions Without Persistence",
         "description": "Upload an image and run OCR only, without storing paper, question, or image records.",
     },
-    ("POST", "/api/ocr/diagram/crop"): {
-        "summary": "Generate Diagram Crop",
-        "description": "Call the diagram crop pipeline for a question snapshot and return an extracted diagram image URL when enabled.",
-    },
     ("POST", "/api/ocr/diagram/svg"): {
         "summary": "Generate Diagram SVG",
         "description": "Generate an SVG version of the diagram based on the question text and optional seed images.",

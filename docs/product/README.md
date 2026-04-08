@@ -215,7 +215,7 @@ V2: 产品重设计 (当前规划)
 - 主 README: `/README.md`
 - 服务端 README: `/lf-smart-paper-service/README.md`
 - 前端 README: `/lf-smart-paper-web/README.md`
-- API 文档: 启动服务后访问 `http://localhost:8000/docs`
+- API 文档: 启动服务后访问 `http://localhost:8100/docs`
 
 ---
 

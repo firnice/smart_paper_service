@@ -15,6 +15,8 @@ from app.db.models.wrong_question_error_reason import WrongQuestionErrorReason
 from app.db.models.study_record import StudyRecord
 from app.db.models.agent_config import AgentConfig
 from app.db.models.trend_analysis import TrendAnalysis
+from app.db.models.model_provider import ModelProvider
+from app.db.models.llm_call_log import LlmCallLog
 
 __all__ = [
     "SchoolTerm",
@@ -34,4 +36,6 @@ __all__ = [
     "StudyRecord",
     "AgentConfig",
     "TrendAnalysis",
+    "ModelProvider",
+    "LlmCallLog",
 ]

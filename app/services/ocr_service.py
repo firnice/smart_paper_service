@@ -11,8 +11,8 @@ from typing import Optional
 from PIL import Image, ImageOps
 from sqlalchemy.orm import Session
 
-from app.core.ocr_extract_llm_config import load_ocr_extract_llm_config
 from app.core.logger import logger
+from app.services.agent_config_service import get_agent_config, get_llm_client_for_agent
 from app.schemas.common import ImageBox
 from app.schemas.ocr import OcrItem
 from app.services.llm_client_service import (
@@ -20,7 +20,6 @@ from app.services.llm_client_service import (
     LlmClientError,
     LlmHttpError,
     LlmNetworkError,
-    get_siliconflow_client,
 )
 
 REFINE_SYSTEM_PROMPT = (
@@ -288,13 +287,7 @@ def _parse_refine_box(text: str) -> Optional[ImageBox]:
     )
 
 
-def resolve_extract_prompt(custom_prompt: Optional[str]) -> tuple[str, Optional[str]]:
-    config = load_ocr_extract_llm_config()
-    normalized_prompt = (custom_prompt or "").strip() or None
-    if not normalized_prompt:
-        return config.user_prompt, None
-    effective_prompt = f"{config.user_prompt}\n\n{config.custom_prompt_prefix}\n{normalized_prompt}"
-    return effective_prompt, normalized_prompt
+_CUSTOM_PROMPT_PREFIX = "以下是用户额外补充的识别要求；如果与上面的输出结构不冲突，请一并遵守："
 
 
 def _call_vision_completion(
@@ -303,25 +296,11 @@ def _call_vision_completion(
     file_name: str,
     system_prompt: str,
     user_prompt: str,
+    llm_client: BaseLlmClient,
+    model_name: str,
     temperature: float = 0.2,
     db: Optional[Session] = None,
 ) -> str:
-    config = load_ocr_extract_llm_config()
-    client = get_siliconflow_client()
-    if not client:
-        logger.error("OCR LLM config missing. Please set SILICONFLOW_API_KEY and SILICONFLOW_BASE_URL.")
-        raise RuntimeError("SILICONFLOW LLM config missing.")
-    if config.provider != "siliconflow":
-        raise RuntimeError(f"Unsupported OCR LLM provider: {config.provider}")
-    if not config.model:
-        raise RuntimeError("OCR extract YAML missing model.")
-    llm_client = BaseLlmClient(
-        provider="siliconflow",
-        base_url=client.base_client.base_url,
-        api_key=client.base_client.api_key,
-        timeout_seconds=config.timeout_seconds or client.base_client.timeout_seconds,
-    )
-    model_name = config.model
     timeout_seconds = llm_client.timeout_seconds
 
     retry_candidates: list[tuple[str, bytes, str, str]] = [
@@ -444,21 +423,42 @@ def extract_questions(
     db: Optional[Session] = None,
 ) -> tuple[list[OcrItem], str]:
     """Call a multimodal LLM to extract and analyze questions from the paper image."""
-    config = load_ocr_extract_llm_config()
-    effective_prompt, custom_prompt = resolve_extract_prompt(prompt)
+    if db is None:
+        raise RuntimeError("extract_questions requires a db session to load agent config")
+
+    result = get_llm_client_for_agent(db, "ocr_recognize")
+    if not result:
+        raise RuntimeError("ocr_recognize agent is unavailable (missing config or disabled)")
+    llm_client, agent_cfg = result
+
+    system_prompt = (agent_cfg.system_prompt or "").strip()
+    base_user_prompt = (agent_cfg.user_prompt_template or "").strip()
+
+    if not system_prompt or not base_user_prompt:
+        raise RuntimeError("ocr_recognize agent is missing system_prompt or user_prompt_template in database")
+
+    # 合并用户自定义追加 prompt
+    normalized_custom = (prompt or "").strip() or None
+    if normalized_custom:
+        effective_prompt = f"{base_user_prompt}\n\n{_CUSTOM_PROMPT_PREFIX}\n{normalized_custom}"
+    else:
+        effective_prompt = base_user_prompt
+
     logger.info(
-        "OCR prompt resolved file=%s custom_prompt=%r effective_prompt=%r",
+        "OCR prompt resolved file=%s model=%s custom_prompt=%r",
         file_name,
-        custom_prompt,
-        effective_prompt,
+        agent_cfg.model,
+        normalized_custom,
     )
     content = _call_vision_completion(
         image_bytes=image_bytes,
         content_type=content_type,
         file_name=file_name,
-        system_prompt=config.system_prompt,
+        system_prompt=system_prompt,
         user_prompt=effective_prompt,
-        temperature=config.temperature,
+        llm_client=llm_client,
+        model_name=agent_cfg.model,
+        temperature=agent_cfg.temperature,
         db=db,
     )
     items = _parse_items(content)
@@ -492,12 +492,20 @@ def refine_diagram_box(
     Second-pass refinement for printed diagram region.
     Input should be one question snapshot.
     """
+    if db is None:
+        raise RuntimeError("refine_diagram_box requires a db session")
+    result = get_llm_client_for_agent(db, "ocr_recognize")
+    if not result:
+        raise RuntimeError("ocr_recognize agent unavailable for refine_diagram_box")
+    llm_client, agent_cfg = result
     content = _call_vision_completion(
         image_bytes=image_bytes,
         content_type=content_type,
         file_name=file_name,
         system_prompt=REFINE_SYSTEM_PROMPT,
         user_prompt=REFINE_USER_PROMPT,
+        llm_client=llm_client,
+        model_name=agent_cfg.model,
         temperature=0.0,
         db=db,
     )

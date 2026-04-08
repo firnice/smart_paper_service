@@ -15,6 +15,7 @@ from app.db.models import (
     WrongQuestionErrorReason,
 )
 from app.db.session import get_db
+from app.core.student_auth import get_student_session
 from app.schemas.statistics import (
     CategoryStatisticsItem,
     ErrorReasonStatisticsItem,
@@ -200,11 +201,11 @@ def _build_trend(
 
 @router.get("/api/statistics/overview", response_model=StatisticsOverviewResponse)
 def get_statistics_overview(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     term_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     wrong_filters = _wrong_question_filters(student_id, start_date, end_date, term_id)
@@ -255,10 +256,10 @@ def get_statistics_overview(
 
 @router.get("/api/statistics/by-subject", response_model=List[SubjectStatisticsItem])
 def get_statistics_by_subject(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     wrong_filters = _wrong_question_filters(student_id, start_date, end_date)
@@ -267,10 +268,10 @@ def get_statistics_by_subject(
 
 @router.get("/api/statistics/by-grade", response_model=List[GradeStatisticsItem])
 def get_statistics_by_grade(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     wrong_filters = _wrong_question_filters(student_id, start_date, end_date)
@@ -279,10 +280,10 @@ def get_statistics_by_grade(
 
 @router.get("/api/statistics/by-category", response_model=List[CategoryStatisticsItem])
 def get_statistics_by_category(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     wrong_filters = _wrong_question_filters(student_id, start_date, end_date)
@@ -291,10 +292,10 @@ def get_statistics_by_category(
 
 @router.get("/api/statistics/by-error-reason", response_model=List[ErrorReasonStatisticsItem])
 def get_statistics_by_error_reason(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     wrong_filters = _wrong_question_filters(student_id, start_date, end_date)
@@ -303,10 +304,10 @@ def get_statistics_by_error_reason(
 
 @router.get("/api/statistics/trend", response_model=List[TrendStatisticsItem])
 def get_statistics_trend(
-    student_id: int,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
+    student_id: int = Depends(get_student_session),
 ):
     _validate_student(db, student_id)
     return _build_trend(db, student_id, start_date, end_date)

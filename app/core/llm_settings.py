@@ -6,6 +6,10 @@ import os
 from typing import Optional
 
 
+DEFAULT_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+DEFAULT_WHATAI_BASE_URL = "https://api.whatai.cc/v1"
+
+
 @dataclass(frozen=True)
 class LlmSettings:
     api_key: str
@@ -19,9 +23,16 @@ class LlmSettings:
 class WhataiSettings:
     api_key: str
     base_url: str
-    diagram_crop_model: Optional[str] = None
     diagram_svg_model: Optional[str] = None
     timeout_seconds: int = 180
+
+
+@dataclass(frozen=True)
+class BuiltinProviderSeed:
+    name: str
+    base_url: str
+    api_key: str
+    is_active: bool
 
 
 def _load_from_secrets() -> dict[str, Optional[str]]:
@@ -48,7 +59,6 @@ def _load_whatai_from_secrets() -> dict[str, Optional[str]]:
     return {
         "api_key": getattr(secrets, "WHATAI_API_KEY", None),
         "base_url": getattr(secrets, "WHATAI_BASE_URL", None),
-        "diagram_crop_model": getattr(secrets, "WHATAI_DIAGRAM_CROP_MODEL", None),
         "diagram_svg_model": getattr(secrets, "WHATAI_DIAGRAM_SVG_MODEL", None),
         "timeout_seconds": getattr(secrets, "WHATAI_TIMEOUT_SECONDS", None),
     }
@@ -90,11 +100,6 @@ def load_whatai_settings() -> Optional[WhataiSettings]:
 
     api_key = config.get("api_key") or os.getenv("WHATAI_API_KEY")
     base_url = config.get("base_url") or os.getenv("WHATAI_BASE_URL")
-    diagram_crop_model = (
-        config.get("diagram_crop_model")
-        or os.getenv("WHATAI_DIAGRAM_CROP_MODEL")
-        or "gemini-3.1-flash-image-preview"
-    )
     diagram_svg_model = (
         config.get("diagram_svg_model")
         or os.getenv("WHATAI_DIAGRAM_SVG_MODEL")
@@ -105,7 +110,7 @@ def load_whatai_settings() -> Optional[WhataiSettings]:
     if not api_key or not base_url:
         return None
 
-    if not diagram_crop_model and not diagram_svg_model:
+    if not diagram_svg_model:
         return None
 
     timeout_seconds = 180
@@ -118,7 +123,40 @@ def load_whatai_settings() -> Optional[WhataiSettings]:
     return WhataiSettings(
         api_key=api_key,
         base_url=base_url.rstrip("/"),
-        diagram_crop_model=diagram_crop_model,
         diagram_svg_model=diagram_svg_model,
         timeout_seconds=timeout_seconds,
     )
+
+
+def load_builtin_provider_seed(provider: str) -> Optional[BuiltinProviderSeed]:
+    if provider == "siliconflow":
+        config = _load_from_secrets()
+        api_key = str(config.get("api_key") or os.getenv("SILICONFLOW_API_KEY") or "")
+        base_url = str(
+            config.get("base_url")
+            or os.getenv("SILICONFLOW_BASE_URL")
+            or DEFAULT_SILICONFLOW_BASE_URL
+        ).rstrip("/")
+        return BuiltinProviderSeed(
+            name="siliconflow",
+            base_url=base_url,
+            api_key=api_key,
+            is_active=bool(api_key),
+        )
+
+    if provider == "whatai":
+        config = _load_whatai_from_secrets()
+        api_key = str(config.get("api_key") or os.getenv("WHATAI_API_KEY") or "")
+        base_url = str(
+            config.get("base_url")
+            or os.getenv("WHATAI_BASE_URL")
+            or DEFAULT_WHATAI_BASE_URL
+        ).rstrip("/")
+        return BuiltinProviderSeed(
+            name="whatai",
+            base_url=base_url,
+            api_key=api_key,
+            is_active=bool(api_key),
+        )
+
+    return None

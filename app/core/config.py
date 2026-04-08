@@ -45,31 +45,36 @@ def _env_str(name: str, default: str) -> str:
     return value if value else default
 
 
-@dataclass(frozen=True)
-class Settings:
-    app_name: str = "Smart Paper Service"
-    app_version: str = "0.1.0"
-    environment: str = "local"
-    cors_origins: tuple[str, ...] = (
+def _load_cors_origins() -> tuple[str, ...]:
+    """优先读 llm_secrets.CORS_ORIGINS，其次环境变量，最后本地开发默认值。"""
+    from app.core.secrets_loader import secret_str
+    raw = secret_str("CORS_ORIGINS", "CORS_ORIGINS")
+    if raw:
+        return tuple(o.strip() for o in raw.split(",") if o.strip())
+    return (
         "http://localhost:5173",
         "http://localhost:3000",
     )
 
+
+def _load_str(secrets_attr: str, env_name: str, default: str) -> str:
+    from app.core.secrets_loader import secret_str
+    return secret_str(secrets_attr, env_name, default)
+
+
+@dataclass(frozen=True)
+class Settings:
+    app_name: str = "Smart Paper Service"
+    app_version: str = "0.1.0"
+    environment: str = _env_str("ENVIRONMENT", "local")
+    cors_origins: tuple[str, ...] = _load_cors_origins()
+
     # Database configuration
-    database_url: str = os.getenv(
-        "DATABASE_URL",
-        DEFAULT_DATABASE_URL,
-    )
+    database_url: str = _load_str("DATABASE_URL", "DATABASE_URL", DEFAULT_DATABASE_URL)
 
     # Storage configuration
-    storage_base_dir: str = os.getenv(
-        "STORAGE_BASE_DIR",
-        str(DEFAULT_STORAGE_DIR),
-    )
-    storage_base_url: str = os.getenv(
-        "STORAGE_BASE_URL",
-        "http://localhost:8000/static"
-    )
+    storage_base_dir: str = _load_str("STORAGE_BASE_DIR", "STORAGE_BASE_DIR", str(DEFAULT_STORAGE_DIR))
+    storage_base_url: str = _load_str("STORAGE_BASE_URL", "STORAGE_BASE_URL", "http://localhost:8100/static")
 
     # OCR pipeline preprocessing
     enable_local_preprocess: bool = _env_bool("ENABLE_LOCAL_PREPROCESS", True)
@@ -81,7 +86,6 @@ class Settings:
     annotation_clean_timeout_seconds: int = _env_int("ANNOTATION_CLEAN_TIMEOUT_SECONDS", 20)
 
     # WhatAI diagram routes
-    enable_whatai_diagram_crop: bool = _env_bool("ENABLE_WHATAI_DIAGRAM_CROP", True)
     enable_whatai_diagram_svg: bool = _env_bool("ENABLE_WHATAI_DIAGRAM_SVG", True)
 
     # Rebuild confidence
