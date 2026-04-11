@@ -74,7 +74,7 @@ class Settings:
 
     # Storage configuration
     storage_base_dir: str = _load_str("STORAGE_BASE_DIR", "STORAGE_BASE_DIR", str(DEFAULT_STORAGE_DIR))
-    storage_base_url: str = _load_str("STORAGE_BASE_URL", "STORAGE_BASE_URL", "/static")
+    storage_base_url: str = _load_str("STORAGE_BASE_URL", "STORAGE_BASE_URL", "http://localhost:8100/static")
 
     # OCR pipeline preprocessing
     enable_local_preprocess: bool = _env_bool("ENABLE_LOCAL_PREPROCESS", True)
