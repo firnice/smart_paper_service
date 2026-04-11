@@ -222,7 +222,11 @@ def generate_variants_for_question(
     model = config.model
     temperature = config.temperature
     subject_name = subject or "数学"
-    system_prompt = config.system_prompt.format(subject=subject_name, count=count)
+    system_prompt = (
+        config.system_prompt
+        .replace("{subject}", subject_name)
+        .replace("{count}", str(count))
+    )
 
     # 尝试读取 svg 内容（source_svg 可能是 URL 或内联 svg 字符串）
     source_svg_content: Optional[str] = None
