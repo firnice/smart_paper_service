@@ -76,9 +76,10 @@ def analyze_question(
         return None
 
     grade_display = grade or "未知"
-    user_prompt = user_template.format(
-        grade=grade_display,
-        question_text=question_text.strip(),
+    user_prompt = (
+        user_template
+        .replace("{grade}", grade_display)
+        .replace("{question_text}", question_text.strip())
     )
 
     payload = {

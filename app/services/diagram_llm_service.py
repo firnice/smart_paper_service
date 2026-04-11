@@ -82,7 +82,7 @@ def generate_diagram_svg(
     user_content: list[dict[str, Any]] = [
         {
             "type": "text",
-            "text": user_template.format(question_text=(question_text or "").strip()[:560]),
+            "text": user_template.replace("{question_text}", (question_text or "").strip()[:560]),
         }
     ]
     if diagram_image_bytes:

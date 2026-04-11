@@ -160,7 +160,11 @@ def generate_variants(
 ) -> list[str]:
     """Generate same-type variants via LLM."""
     base_client, config = _get_client_and_config(db)
-    system_prompt = config.system_prompt.format(subject=subject or "数学", count=count)
+    system_prompt = (
+        config.system_prompt
+        .replace("{subject}", subject or "数学")
+        .replace("{count}", str(count))
+    )
 
     user_prompt = f"Source question: {source_text}\n"
     if grade:
@@ -280,7 +284,11 @@ def generate_variants_for_question(
         attempts += 1
         remaining = count - len(items)
         existing_texts = "\n".join(f"- {item.text}" for item in items if item.text.strip())
-        retry_system_prompt = config.system_prompt.format(subject=subject_name, count=remaining)
+        retry_system_prompt = (
+            config.system_prompt
+            .replace("{subject}", subject_name)
+            .replace("{count}", str(remaining))
+        )
         retry_user_prompt = (
             f"原题：{source_text}\n"
             f"已经生成了{len(items)}道题，但还缺{remaining}道。\n"
