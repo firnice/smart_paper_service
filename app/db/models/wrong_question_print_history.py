@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, func
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, func
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -14,22 +14,25 @@ class WrongQuestionPrintHistory(Base):
         Integer,
         ForeignKey("wrong_questions.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     export_id = Column(
         Integer,
         ForeignKey("exports.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     student_id = Column(
         Integer,
         ForeignKey("users.id"),
         nullable=False,
-        index=True,
     )
-    printed_at = Column(DateTime, nullable=False, index=True, default=func.now())
+    printed_at = Column(DateTime, nullable=False, default=func.now())
 
     wrong_question = relationship("WrongQuestion", back_populates="print_history")
     export = relationship("Export", back_populates="print_history")
     student = relationship("User", back_populates="print_history")
+
+    __table_args__ = (
+        Index("ix_wqph_wrong_question_id", "wrong_question_id"),
+        Index("ix_wqph_export_id", "export_id"),
+        Index("ix_wqph_student_printed", "student_id", "printed_at"),
+    )
