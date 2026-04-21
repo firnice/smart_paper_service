@@ -25,3 +25,8 @@ class Export(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     term = relationship("SchoolTerm", back_populates="exports")
+    print_history = relationship(
+        "WrongQuestionPrintHistory",
+        back_populates="export",
+        cascade="all, delete-orphan",
+    )

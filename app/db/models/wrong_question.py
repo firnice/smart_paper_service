@@ -70,3 +70,8 @@ class WrongQuestion(Base):
         back_populates="wrong_question",
         cascade="all, delete-orphan",
     )
+    print_history = relationship(
+        "WrongQuestionPrintHistory",
+        back_populates="wrong_question",
+        cascade="all, delete-orphan",
+    )

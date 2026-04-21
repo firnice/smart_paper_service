@@ -17,6 +17,7 @@ from app.db.models.agent_config import AgentConfig
 from app.db.models.trend_analysis import TrendAnalysis
 from app.db.models.model_provider import ModelProvider
 from app.db.models.llm_call_log import LlmCallLog
+from app.db.models.wrong_question_print_history import WrongQuestionPrintHistory
 
 __all__ = [
     "SchoolTerm",
@@ -38,4 +39,5 @@ __all__ = [
     "TrendAnalysis",
     "ModelProvider",
     "LlmCallLog",
+    "WrongQuestionPrintHistory",
 ]

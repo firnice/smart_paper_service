@@ -54,3 +54,8 @@ class User(Base):
         back_populates="student",
         cascade="all, delete-orphan",
     )
+    print_history = relationship(
+        "WrongQuestionPrintHistory",
+        back_populates="student",
+        foreign_keys="WrongQuestionPrintHistory.student_id",
+    )
