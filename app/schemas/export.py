@@ -79,3 +79,4 @@ class PrintPackExportResponse(BaseModel):
     id: int
     status: str
     download_url: Optional[str] = None
+    filename: Optional[str] = None
