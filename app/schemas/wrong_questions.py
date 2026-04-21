@@ -113,6 +113,8 @@ class WrongQuestionResponse(BaseModel):
     first_error_date: Optional[date]
     last_review_date: Optional[date]
     last_practice_result: Optional[str]
+    print_count: int = 0
+    last_printed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

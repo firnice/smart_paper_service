@@ -1,10 +1,10 @@
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Param
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -18,6 +18,7 @@ from app.db.models import (
     WrongQuestion,
     WrongQuestionCategory,
     WrongQuestionErrorReason,
+    WrongQuestionPrintHistory,
 )
 from app.db.session import get_db
 from app.core.student_auth import get_student_session
@@ -140,7 +141,11 @@ def _build_student_brief(user: User) -> StudentBrief:
     )
 
 
-def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
+def _serialize_wrong_question(
+    item: WrongQuestion,
+    print_count: int = 0,
+    last_printed_at: Optional[datetime] = None,
+) -> WrongQuestionResponse:
     subject = None
     if item.subject:
         subject = SubjectBrief(id=item.subject.id, code=item.subject.code, name=item.subject.name)
@@ -194,6 +199,8 @@ def _serialize_wrong_question(item: WrongQuestion) -> WrongQuestionResponse:
         first_error_date=item.first_error_date,
         last_review_date=item.last_review_date,
         last_practice_result=item.last_practice_result,
+        print_count=print_count,
+        last_printed_at=last_printed_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -384,11 +391,39 @@ def list_wrong_questions(
     order_expr = sort_column.asc() if resolved_sort_order == "asc" else sort_column.desc()
 
     total = query.count()
-    items = query.order_by(order_expr).offset(offset).limit(limit).all()
-    return WrongQuestionListResponse(
-        total=total,
-        items=[_serialize_wrong_question(item) for item in items],
+
+    stats_subq = (
+        db.query(
+            WrongQuestionPrintHistory.wrong_question_id.label("wq_id"),
+            func.count(WrongQuestionPrintHistory.id).label("cnt"),
+            func.max(WrongQuestionPrintHistory.printed_at).label("last_at"),
+        )
+        .filter(WrongQuestionPrintHistory.student_id == student_id)
+        .group_by(WrongQuestionPrintHistory.wrong_question_id)
+        .subquery()
     )
+
+    rows = (
+        query.add_columns(stats_subq.c.cnt, stats_subq.c.last_at)
+        .outerjoin(stats_subq, stats_subq.c.wq_id == WrongQuestion.id)
+        .order_by(order_expr)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    serialized = []
+    for row in rows:
+        item, cnt, last_at = row
+        serialized.append(
+            _serialize_wrong_question(
+                item,
+                print_count=int(cnt or 0),
+                last_printed_at=last_at,
+            )
+        )
+
+    return WrongQuestionListResponse(total=total, items=serialized)
 
 
 @router.get("/api/wrong-questions/{wrong_question_id}", response_model=WrongQuestionResponse)
