@@ -1,7 +1,10 @@
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import User
+from app.db.models import User, WrongQuestionPrintHistory
 from app.db.models.export import Export
 from app.db.models.student_profile import StudentProfile
 from app.db.session import get_db
@@ -14,6 +17,7 @@ from app.schemas.export import (
 )
 from app.services import export_service
 from app.services import term_service
+from app.services.print_filename_service import build_print_pack_filename
 
 router = APIRouter()
 
@@ -108,6 +112,44 @@ def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depe
         term_id=resolved_term_id,
     )
     db.add(export_record)
+
+    filename: Optional[str] = None
+    if response.status == "completed":
+        unique_ids: list[int] = []
+        seen: set[int] = set()
+        for item in payload.items:
+            sid = item.source_question_id
+            if sid is None or sid in seen:
+                continue
+            seen.add(sid)
+            unique_ids.append(sid)
+
+        try:
+            db.flush()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to persist print-pack export record",
+            ) from exc
+
+        printed_at = export_record.created_at or datetime.utcnow()
+        for source_id in unique_ids:
+            db.add(
+                WrongQuestionPrintHistory(
+                    wrong_question_id=source_id,
+                    export_id=export_record.id,
+                    student_id=payload.student_id,
+                    printed_at=printed_at,
+                )
+            )
+
+        filename = build_print_pack_filename(
+            db=db,
+            student_id=payload.student_id,
+            source_question_ids=unique_ids,
+        )
+
     try:
         db.commit()
         db.refresh(export_record)
@@ -122,4 +164,5 @@ def create_print_pack_export(payload: PrintPackExportRequest, db: Session = Depe
         id=export_record.id,
         status=response.status,
         download_url=response.download_url,
+        filename=filename,
     )
