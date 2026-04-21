@@ -78,6 +78,10 @@ class DiagramSvgGenerateRequest(BaseModel):
     question_text: str
     question_image_url: Optional[str] = None
     diagram_image_url: Optional[str] = None
+    original_image_url: Optional[str] = None
+    latest_svg_url: Optional[str] = None
+    latest_svg: Optional[str] = None
+    prompt: Optional[str] = None
     item_id: int = 0
 
 

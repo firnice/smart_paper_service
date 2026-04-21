@@ -28,6 +28,7 @@ from app.schemas.ocr import (
 from app.services import diagram_llm_service
 from app.services import ocr_service
 from app.services import question_analysis_service
+from app.services.diagram_llm_service import DiagramSvgUpstreamError
 from app.db.models.paper import Paper
 from app.db.models.question import Question
 from app.db.session import get_db
@@ -85,6 +86,50 @@ def _load_asset_bytes(asset_url: str) -> tuple[bytes, str]:
 
     content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     return file_path.read_bytes(), content_type
+
+
+def _load_svg_text(svg_value: Optional[str], *, field_name: str) -> Optional[str]:
+    value = str(svg_value or "").strip()
+    if not value:
+        return None
+    if value.startswith("<svg") or value.startswith("<?xml"):
+        return value
+
+    raw_bytes, content_type = _load_asset_bytes(value)
+    normalized_type = (content_type or "").lower()
+    if "svg" not in normalized_type and not value.lower().endswith(".svg"):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be an SVG asset.")
+    try:
+        return raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} is not valid UTF-8 SVG.") from exc
+
+
+def _collect_reference_images(payload: DiagramSvgGenerateRequest) -> list[tuple[bytes, str]]:
+    reference_images: list[tuple[bytes, str]] = []
+    seen_urls: set[str] = set()
+
+    for field_name, asset_url in (
+        ("original_image_url", payload.original_image_url),
+        ("diagram_image_url", payload.diagram_image_url),
+        ("question_image_url", payload.question_image_url),
+    ):
+        value = str(asset_url or "").strip()
+        if not value or value in seen_urls:
+            continue
+        seen_urls.add(value)
+        try:
+            file_bytes, content_type = _load_asset_bytes(value)
+        except HTTPException as exc:
+            logger.warning(
+                "SVG reference image load failed field=%s item=%s: %s",
+                field_name,
+                payload.item_id,
+                exc.detail,
+            )
+            continue
+        reference_images.append((file_bytes, content_type))
+    return reference_images
 
 @router.post(
     "/api/ocr/extract",
@@ -333,32 +378,32 @@ async def generate_diagram_svg(payload: DiagramSvgGenerateRequest, db: Session =
     if not settings.enable_whatai_diagram_svg:
         return DiagramSvgGenerateResponse()
 
-    diagram_seed_bytes = None
-    if payload.diagram_image_url:
-        try:
-            diagram_seed_bytes, _ = _load_asset_bytes(payload.diagram_image_url)
-        except HTTPException as exc:
-            logger.warning(
-                "SVG seed diagram load failed for item=%s: %s",
-                payload.item_id,
-                exc.detail,
-            )
-    if not diagram_seed_bytes and payload.question_image_url:
-        try:
-            diagram_seed_bytes, _ = _load_asset_bytes(payload.question_image_url)
-        except HTTPException as exc:
-            logger.warning(
-                "SVG seed question load failed for item=%s: %s",
-                payload.item_id,
-                exc.detail,
-            )
+    latest_svg = payload.latest_svg
+    if not latest_svg and payload.latest_svg_url:
+        latest_svg = _load_svg_text(payload.latest_svg_url, field_name="latest_svg_url")
 
-    diagram_svg = diagram_llm_service.generate_diagram_svg(
-        payload.question_text,
-        diagram_image_bytes=diagram_seed_bytes,
-        trace_id=f"diagram-svg:item:{payload.item_id or 'unknown'}",
-        db=db,
-    )
+    normalized_prompt = (payload.prompt or "").strip() or None
+    if latest_svg and not normalized_prompt:
+        raise HTTPException(status_code=400, detail="重新生成已有配图时必须提供 prompt。")
+
+    reference_images = _collect_reference_images(payload)
+
+    try:
+        diagram_svg = diagram_llm_service.generate_diagram_svg(
+            payload.question_text,
+            reference_images=reference_images,
+            latest_svg=latest_svg,
+            custom_prompt=normalized_prompt,
+            trace_id=f"diagram-svg:item:{payload.item_id or 'unknown'}",
+            db=db,
+        )
+    except DiagramSvgUpstreamError as exc:
+        logger.warning(
+            "Diagram svg upstream failed for item=%s: %s",
+            payload.item_id,
+            str(exc),
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not diagram_svg:
         return DiagramSvgGenerateResponse()
 

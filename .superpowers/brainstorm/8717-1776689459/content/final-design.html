@@ -1,0 +1,25 @@
+<h2>设计已确认 · 即将写入 spec</h2>
+<p class="subtitle">所有决策已记录，正在生成 design doc</p>
+
+<div class="section">
+  <span class="label">交付范围</span>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:16px; line-height:1.9;">
+      ✓ 新表 <code>wrong_question_print_history</code>（Alembic 迁移）<br/>
+      ✓ <code>POST /api/print-pack/export</code> 同事务写入 print_history，返回 filename<br/>
+      ✓ <code>GET /api/wrong-questions</code> 聚合返回 print_count / last_printed_at<br/>
+      ✓ 后端新构造函数 <code>build_print_pack_filename</code><br/>
+      ✓ 前端 PrintPage 默认勾选排除已打印题<br/>
+      ✓ 前端 SelectQuestionsStep 三视图加徽章<br/>
+      ✗ 旧版 <code>/api/export</code> 不接入<br/>
+      ✗ 打印页以外的页面不加徽章
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <span class="label">文件名示例</span>
+  <pre style="background:#1a1a1a; color:#e8e8e8; padding:16px; border-radius:8px; font-size:13px;">李-三年级-上-数学-20260420-1435.pdf
+王-四年级-下-语文_英语-20260420-1712.pdf
+学生-三年级-上-未分类-20260420-1435.pdf</pre>
+</div>

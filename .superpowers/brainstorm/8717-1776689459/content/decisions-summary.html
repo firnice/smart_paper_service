@@ -1,0 +1,36 @@
+<h2>需求确认汇总</h2>
+<p class="subtitle">两条功能需求 + 9 项澄清决策</p>
+
+<div class="section">
+  <span class="label">需求 1 · 打印记录</span>
+  <div class="mockup">
+    <div class="mockup-header">已打印错题默认不勾选</div>
+    <div class="mockup-body" style="padding:16px; line-height:1.8;">
+      · <b>判定范围</b>：终身已打印（任何一次导出过即算）<br/>
+      · <b>是否可手动勾选</b>：可以，只影响默认态，不禁用<br/>
+      · <b>视觉标记</b>：徽章 "已打印 3 次 · 最近 04-12"<br/>
+      · <b>存储方式</b>：新建关联表 <code>wrong_question_print_history(wrong_question_id, export_id, printed_at)</code>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <span class="label">需求 2 · 文件命名</span>
+  <div class="mockup">
+    <div class="mockup-header">新命名规则</div>
+    <div class="mockup-body" style="padding:16px; line-height:1.8;">
+      格式：<code>{姓}-{年级}-{上/下}-{学科}-{YYYYMMDD-HHMM}</code><br/>
+      · <b>姓</b>：学生 name 首字（中文姓/英文名首词），未登录用 <code>学生</code><br/>
+      · <b>年级/学期</b>：不跨年级（UI 已保证），不跨学期（打印页锁定单一）<br/>
+      · <b>学科</b>：混合时拼接 <code>数学_语文</code><br/>
+      · <b>时间</b>：<code>20260420-1435</code>，精确到分钟
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <span class="label">命名示例</span>
+  <pre style="background:#1a1a1a; color:#e8e8e8; padding:16px; border-radius:8px; font-size:13px; overflow-x:auto;">李-三年级-上-数学-20260420-1435
+王-四年级-下-语文_英语-20260420-1712
+学生-三年级-上-数学-20260420-1435   （未登录 fallback）</pre>
+</div>
