@@ -1,3 +1,5 @@
+
+
 # lf-smart-paper-service
 
 Smart Paper（智能错题本）后端服务，覆盖以下两类能力：
@@ -62,7 +64,7 @@ Smart Paper（智能错题本）后端服务，覆盖以下两类能力：
 ## 数据关系（核心）
 
 - `users`：统一用户表，区分 `student` / `parent` 等角色
-- `student_profiles`：学生档案（年级、班级、学校）
+- `student_profiles`：学生档案（学号、年级、班级、学校）
 - `parent_student_links`：家长与学生多对多关系
 - `subjects`：学科字典
 - `wrong_question_categories`：错题分类
